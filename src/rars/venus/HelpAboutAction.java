@@ -52,7 +52,8 @@ public class HelpAboutAction extends GuiAction {
                         "  *  Tango Desktop Project (tango.freedesktop.org),\n" +
                         "  *  glyFX (www.glyfx.com) Common Toolbar Set,\n" +
                         "  *  KDE-Look (www.kde-look.org) crystalline-blue-0.1,\n" +
-                        "  *  Icon-King (www.icon-king.com) Nuvola 1.0.",
+                        "  *  Icon-King (www.icon-king.com) Nuvola 1.0.\n" + 
+                        "\nModified version by Pablo Muñoz (UAH)\nfor the Degree on Space Physics and Instrumentation.",
                 "About Rars",
                 JOptionPane.INFORMATION_MESSAGE,
                 new ImageIcon("images/RISC-V.png"));
