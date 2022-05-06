@@ -10,8 +10,8 @@ import rars.util.Binary;
 import java.util.Observable;
 import javax.swing.*;
 import java.awt.*;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 
 
 /**
@@ -24,7 +24,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     private static final String VERSION = "0.1";
     
     /** Memory addreses for the MMIO */
-    static final int MEM_IO_WRITE_VOLTAGE = Memory.memoryMapBaseAddress + 0x00;
+    static final int MEM_IO_WRITE_POWER   = Memory.memoryMapBaseAddress + 0x00;
     static final int MEM_IO_WRITE_SENSORS = Memory.memoryMapBaseAddress + 0x01;
     static final int MEM_IO_WRITE_ANGLE   = Memory.memoryMapBaseAddress + 0x02;
     static final int MEM_IO_READ_COMMAND  = Memory.memoryMapBaseAddress + 0x03;    
@@ -88,12 +88,13 @@ public class SolarPanel extends AbstractToolAndApplication {
         initComponents();
         sunSlider.setValue(sunSlider.getMaximum()/4);
         battery = new BatteryThread();
-        sensors = new SensorsThread();
+        sensors = new SensorsThread();   
+        // Start threads
         battery.start();
         sensors.start();
         return panelTools;
     }
-    
+       
     @Override
     protected void performSpecialClosingDuties() {
         reset();
@@ -101,11 +102,11 @@ public class SolarPanel extends AbstractToolAndApplication {
     
     @Override
     protected void reset() {
+        battery.finish();
+        sensors.finish();
         batteryCapacity = MAX_BATTERY_CAPACITY/2;
         outputPower = 0;
         panelAngle = 0;
-        battery.interrupt();
-        sensors.interrupt();
         if(motor != null)
             motor.interrupt();
         if(test != null)
@@ -116,6 +117,37 @@ public class SolarPanel extends AbstractToolAndApplication {
     protected void addAsObserver() {
         addAsObserver(MEM_IO_READ_COMMAND, MEM_IO_READ_COMMAND);
     }
+    
+    
+    /**
+     * A help popup window on how to use this tool (provided by the simulator UI)
+     */
+    @Override
+    protected JComponent getHelpComponent() {
+        final String helpContent =
+            "Use this tool to simulate the Memory Mapped IO (MMIO) for controlling a solar panel. " +
+            "While this tool is connected to the program it runs a clock (starting from time 0), storing the time in milliseconds. " +
+            "The memory directions are:\n" +
+            "Read the command motor: "+ Binary.intToHexString(MEM_IO_READ_COMMAND) + "\n" + 
+            "Write the motor position (solar panel angle):" + Binary.intToHexString(MEM_IO_WRITE_ANGLE) + "\n" +
+            "Write the output power of the solar panel: "+ Binary.intToHexString(MEM_IO_WRITE_POWER) + "\n" +
+            "Write the sensors measurement: "+ Binary.intToHexString(MEM_IO_WRITE_SENSORS); 
+        JButton help = new JButton("Help");
+        help.addActionListener(
+                new ActionListener() {
+                    public void actionPerformed(ActionEvent e) {
+                        JTextArea ja = new JTextArea(helpContent);
+                        ja.setRows(20);
+                        ja.setColumns(60);
+                        ja.setLineWrap(true);
+                        ja.setWrapStyleWord(true);
+                        JOptionPane.showMessageDialog(null, new JScrollPane(ja),
+                                "Simulation of solar panel control", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                });
+        return help;
+    }
+    
         
 //    @Override
 //    public void paint(Graphics g)
@@ -168,7 +200,13 @@ public class SolarPanel extends AbstractToolAndApplication {
 
     
     private class BatteryThread extends Thread {
+        private boolean finish = false;
+        
         public BatteryThread() {
+        }
+        
+        private void finish() {
+            finish = true;
         }
         
         @Override
@@ -178,13 +216,20 @@ public class SolarPanel extends AbstractToolAndApplication {
                     //System.out.println("battery");
                     this.sleep(700);
                 } catch (InterruptedException ex) {
+                    finish = true;
                 }
-            }while(true);
+            }while(!finish);
         }
     }
     
     private class SensorsThread extends Thread {       
+        private boolean finish = false;
+        
         public SensorsThread() {
+        }
+        
+        private void finish() {
+            finish = true;
         }
         
         @Override
@@ -210,12 +255,14 @@ public class SolarPanel extends AbstractToolAndApplication {
                     // Write MMIO for sensors
                     //
                     delay = System.currentTimeMillis()-delay;
+                    delay = delay>0? delay:1;
                     this.sleep(SENSORS_FREQUENCY-delay);
                 }catch(InterruptedException ex) {
                     System.out.println("Error on sleep for SensorsThread run()");
                     System.out.println(ex.toString());
+                    finish = true;
                 }
-            }while(true);
+            }while(!finish);
         }
     }
     
@@ -557,17 +604,17 @@ public class SolarPanel extends AbstractToolAndApplication {
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JLabel angleDegLabel;
     private javax.swing.JLabel angleLabel;
-    private javax.swing.JLabel angleValueLabel;
+    javax.swing.JLabel angleValueLabel;
     private javax.swing.JLabel lintLabel;
-    private javax.swing.JLabel lintValueLabel;
-    private javax.swing.JPanel panelTools;
+    javax.swing.JLabel lintValueLabel;
+    javax.swing.JPanel panelTools;
     private javax.swing.JLabel poutLabel;
-    private javax.swing.JLabel poutValueLabel;
+    javax.swing.JLabel poutValueLabel;
     private javax.swing.JLabel poutWLabel;
     private javax.swing.JLabel rintLabel;
-    private javax.swing.JLabel rintValueLabel;
-    private javax.swing.JSlider sunSlider;
-    private javax.swing.JButton testButton;
+    javax.swing.JLabel rintValueLabel;
+    javax.swing.JSlider sunSlider;
+    javax.swing.JButton testButton;
     // End of variables declaration//GEN-END:variables
     java.awt.geom.Line2D solarPanelLine = new java.awt.geom.Line2D.Double(170,400,470,400);;
 }
