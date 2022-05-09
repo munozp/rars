@@ -29,10 +29,12 @@ public class SolarPanel extends AbstractToolAndApplication {
     static final int MEM_IO_WRITE_ANGLE   = Memory.memoryMapBaseAddress + 0x02;
     static final int MEM_IO_READ_COMMAND  = Memory.memoryMapBaseAddress + 0x03;    
   
+    /** Simulation speed factor for time computations (does not affect threads frequency) */
+    static final int SPEED_FACTOR = 10;
     /** Battery thread frequency in milliseconds */
-    static final int BATTERY_FREQUENCY = 100;
+    static final int BATTERY_FREQUENCY = 200;
     /** Sensors thread frequency in milliseconds */
-    static final int SENSORS_FREQUENCY = 100;
+    static final int SENSORS_FREQUENCY = 200;
     /** Test time in seconds */
     static final int TEST_DURATION = 10;
     /** Number of cicles to repeat the test */
@@ -42,7 +44,9 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Solar panel maximum out power in mW */
     static final int MAX_OUTPUT_POWER = 900000;
     /** Battery capacity in mAh */
-    static final int MAX_BATTERY_CAPACITY = 8000;
+    static final int MAX_BATTERY_CAPACITY = 42000;
+    /** Initial battery level in mAh */
+    static final int INITIAL_BATTERY_PCT = 10;
     /** Power bus voltage in mV */
     static final int BUS_VOLTAGE = 32000;
     /** Minimum solar panel angle in degrees */
@@ -52,14 +56,15 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Limit values of the slider that implies no Sun coverage */
     static final int SUN_SHADE_SLIDER_LIMITS = 50;
     /** Current battery capacity in mW */
-    int batteryCapacity = MAX_BATTERY_CAPACITY/2;
+    double batteryCapacity = 0;
     /** Current output power from solar panel in mW */
-    int outputPower = 0;
-    /** Current solar panel angle in degrees */
+    double outputPower = 0;
+    /** Current solar panel angle in degrees, between MIN_PANEL_ANGLE and MAX_PANEL_ANGLE */
     double panelAngle = 0;
-    /** Current Sun position, based on slider */
+    /** Relationship between slider ticks and sun angle */
+    double sliderToDegrees = 1;
+    /** Current Sun position, based on slider. Position is in degrees can be computed through {@link #getSunDegrees()} */
     int sunPos = 0;
-
     /** Battery thread */
     BatteryThread battery;
     /** Sensors thread */
@@ -69,55 +74,72 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Automatic Sun movment for test (single run per TEST) */
     SunTest test;
     
-    
+    /**
+     * Constructor. Set the tool name and version
+     */
     public SolarPanel() {
         super(SolarPanel.TOOLNAME + ", " + SolarPanel.VERSION, SolarPanel.TOOLNAME);
     }
-    
     public SolarPanel(String title, String heading) {
         super(title, heading);
     }
     
+    /**
+     * @return the tool name
+     */
     @Override
     public String getName() {
         return SolarPanel.TOOLNAME;
     }
     
+    /**
+     * Initialize all components. 
+     * @return the builded component
+     */
     @Override
     protected JComponent buildMainDisplayArea() {
         initComponents();
-        sunSlider.setValue(sunSlider.getMaximum()/4);
+        setBatteryLevel(INITIAL_BATTERY_PCT);
+        int maxs = sunSlider.getMaximum();
+        sunSlider.setValue(maxs/4);
+        // Set correspondence between slider ticks and degrees
+        sliderToDegrees =  180.0 / (maxs-2*SUN_SHADE_SLIDER_LIMITS);
+        // Create and start threads for battery and sensors
         battery = new BatteryThread();
         sensors = new SensorsThread();   
-        // Start threads
         battery.start();
         sensors.start();
         return panelTools;
     }
-       
+    
+    /**
+     * Finish all operations
+     */
     @Override
     protected void performSpecialClosingDuties() {
         reset();
     }
     
+    /**
+     * Finish all threads and initializes all data
+     */
     @Override
     protected void reset() {
         battery.finish();
         sensors.finish();
-        batteryCapacity = MAX_BATTERY_CAPACITY/2;
+        setBatteryLevel(INITIAL_BATTERY_PCT);
         outputPower = 0;
         panelAngle = 0;
         if(motor != null)
             motor.interrupt();
         if(test != null)
-            test.interrupt();        
+            test.interrupt();
     }
     
     @Override
     protected void addAsObserver() {
         addAsObserver(MEM_IO_READ_COMMAND, MEM_IO_READ_COMMAND);
-    }
-    
+    }  
     
     /**
      * A help popup window on how to use this tool (provided by the simulator UI)
@@ -147,17 +169,6 @@ public class SolarPanel extends AbstractToolAndApplication {
                 });
         return help;
     }
-    
-        
-//    @Override
-//    public void paint(Graphics g)
-//    {
-//        g.setColor(Color.BLUE);
-//         ((java.awt.Graphics2D)g).setStroke(new java.awt.BasicStroke(3.0f));
-//        int[] vx = new int[]{80, 120, 140};
-//        int[] vy = new int[]{80, 50, 80};           
-//        g.drawPolygon(vx, vy, 3);  
-//    }
     
     /**
      * Read MMIO updates
@@ -201,6 +212,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     
     private class BatteryThread extends Thread {
         private boolean finish = false;
+        private double newBatteryLevel = -1;
         
         public BatteryThread() {
         }
@@ -209,12 +221,54 @@ public class SolarPanel extends AbstractToolAndApplication {
             finish = true;
         }
         
+        /**
+         * Overrides current battery level with a new one
+         * @param batteryLevel the desired battery level in Ah
+         */
+        public void setBattery(double batteryLevel)
+        {
+            if(batteryLevel < 0 || batteryLevel > MAX_BATTERY_CAPACITY/1000)
+                return;
+            newBatteryLevel = batteryLevel;
+        }
+        
         @Override
         public void run() {
+            long delay;
+            double delta;
+            double charge;
             do{
                 try {
-                    //System.out.println("battery");
-                    this.sleep(700);
+                    delay = System.currentTimeMillis();
+                    if(newBatteryLevel < 0)
+                    {
+                        // Compute solar panel output power
+                        delta = getSunDegrees()-panelAngle;
+                        if(delta<=0 || delta >= 180)
+                            outputPower = 0;
+                        else
+                            outputPower = (int)(Math.sin(Math.toRadians(delta))*MAX_OUTPUT_POWER);
+                        // Increase battery level, charge is Ah
+                        charge = outputPower / BUS_VOLTAGE; 
+                        charge = charge*BATTERY_FREQUENCY/3600000*SPEED_FACTOR;
+                        batteryCapacity += charge*1000; // Battery in mAh
+                        if(batteryCapacity > MAX_BATTERY_CAPACITY)
+                            batteryCapacity = MAX_BATTERY_CAPACITY;
+                    }
+                    else // Overrides battery level
+                    {
+                        batteryCapacity = newBatteryLevel*1000;
+                        newBatteryLevel = -1;
+                    }
+                    // TODO UPDATE MMIO
+                    //
+                    // Update labels
+                    poutValueLabel.setText(String.format("%.3f Wh", outputPower/1000)); //Wh
+                    batteryValueLabel.setText(String.format("%.3f Ah (%.2f%%)", batteryCapacity/1000, batteryCapacity/MAX_BATTERY_CAPACITY*100)); //Ah (%)
+                    // Wait till next update
+                    delay = System.currentTimeMillis()-delay;
+                    delay = delay>0? delay:1;
+                    this.sleep(BATTERY_FREQUENCY-delay);
                 } catch (InterruptedException ex) {
                     finish = true;
                 }
@@ -303,9 +357,17 @@ public class SolarPanel extends AbstractToolAndApplication {
             int min = sunSlider.getMinimum();
             int max = sunSlider.getMaximum();          
             long[] duration = new long[TEST_CYCLES];
-            int[] charge = new int[TEST_CYCLES];
+            double[] charge = new double[TEST_CYCLES];
             long delay;
-                        
+            // Set battery level to 0 and wait to ensure new value
+            battery.setBattery(0);
+            try{
+                this.sleep(BATTERY_FREQUENCY*2);
+            } catch (InterruptedException ex) {
+                System.out.println("Error on sleep for SunTest run()");
+                System.out.println(ex.toString());
+            }
+            
             // Each cycle cover 1 slide range
             for(int c=0; c<TEST_CYCLES; c++)
             {
@@ -314,7 +376,7 @@ public class SolarPanel extends AbstractToolAndApplication {
                 int df = dur/(max-min-2*SUN_SHADE_SLIDER_LIMITS);
                 df = (df>=0)?df:1;
                 long ct = System.currentTimeMillis();
-                
+                charge[c] = batteryCapacity;
                 // Cycle execution
                 for(int p=min; p<max; p++)
                 {
@@ -334,32 +396,29 @@ public class SolarPanel extends AbstractToolAndApplication {
                     }
                 }
                 // Store cycle duration in ms and charge in mW
-                duration[c] = System.currentTimeMillis()-ct;
-                charge[c] = c; //UPDATE
+                duration[c] = (System.currentTimeMillis()-ct)*SPEED_FACTOR;
+                charge[c] = batteryCapacity-charge[c];
             }
-            
             // Generate results
             String results = "";
             long totalduration = 0;
-            int totalcharge = 0;
+            double totalcharge = 0;
             for(int i=0; i<TEST_CYCLES; i++)
             {
-                results += "Cycle "+i+" ("+duration[i]+" ms): "+charge[i]+" mW \n";
+                results += String.format("Cycle %d (%ds): %.3fW \n",i,duration[i]/3600,charge[i]/1000);
                 totalduration += duration[i];
                 totalcharge += charge[i];
             }
-            results += "Total duration: "+totalduration+" ms \n";
-            results += "Total charge: "+totalcharge+" mW \n";
+            results += "Total duration: "+totalduration/3600+"s \n";
+            results += String.format("Total charge: %.3fW \n",totalcharge/1000);
             JOptionPane.showMessageDialog(panelTools, results, "Test results", JOptionPane.INFORMATION_MESSAGE);
-            
             // Enable controls
             sunSlider.setValue(val);
             sunSlider.setEnabled(true);
             testButton.setEnabled(true);
         }
     }
-    
-    
+      
     /**
      * This method is called from within the constructor to initialize the form.
      * WARNING: Do NOT modify this code. The content of this method is always
@@ -375,18 +434,17 @@ public class SolarPanel extends AbstractToolAndApplication {
         lintLabel = new javax.swing.JLabel();
         lintValueLabel = new javax.swing.JLabel();
         poutValueLabel = new javax.swing.JLabel();
-        poutWLabel = new javax.swing.JLabel();
         poutLabel = new javax.swing.JLabel();
         rintLabel = new javax.swing.JLabel();
         rintValueLabel = new javax.swing.JLabel();
         angleLabel = new javax.swing.JLabel();
         angleValueLabel = new javax.swing.JLabel();
-        angleDegLabel = new javax.swing.JLabel();
+        batteryValueLabel = new javax.swing.JLabel();
+        batteryLabel = new javax.swing.JLabel();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
         setTitle("Solar Panel");
         setBackground(new java.awt.Color(0, 0, 0));
-        setMaximumSize(new java.awt.Dimension(640, 480));
         setMinimumSize(new java.awt.Dimension(640, 480));
         setResizable(false);
 
@@ -425,12 +483,8 @@ public class SolarPanel extends AbstractToolAndApplication {
 
         poutValueLabel.setFont(new java.awt.Font("sansserif", 1, 14)); // NOI18N
         poutValueLabel.setForeground(new java.awt.Color(255, 255, 255));
-        poutValueLabel.setText("100000");
+        poutValueLabel.setText("900.000 Wh");
         poutValueLabel.setHorizontalTextPosition(javax.swing.SwingConstants.RIGHT);
-
-        poutWLabel.setFont(new java.awt.Font("sansserif", 0, 14)); // NOI18N
-        poutWLabel.setForeground(new java.awt.Color(255, 255, 255));
-        poutWLabel.setText("mWh");
 
         poutLabel.setFont(new java.awt.Font("sansserif", 0, 14)); // NOI18N
         poutLabel.setForeground(new java.awt.Color(255, 255, 255));
@@ -453,9 +507,14 @@ public class SolarPanel extends AbstractToolAndApplication {
         angleValueLabel.setText("-30.00");
         angleValueLabel.setHorizontalTextPosition(javax.swing.SwingConstants.RIGHT);
 
-        angleDegLabel.setFont(new java.awt.Font("sansserif", 0, 14)); // NOI18N
-        angleDegLabel.setForeground(new java.awt.Color(255, 255, 255));
-        angleDegLabel.setText("º");
+        batteryValueLabel.setFont(new java.awt.Font("sansserif", 1, 14)); // NOI18N
+        batteryValueLabel.setForeground(new java.awt.Color(255, 255, 255));
+        batteryValueLabel.setText("42.000 Ah");
+        batteryValueLabel.setHorizontalTextPosition(javax.swing.SwingConstants.RIGHT);
+
+        batteryLabel.setFont(new java.awt.Font("sansserif", 0, 14)); // NOI18N
+        batteryLabel.setForeground(new java.awt.Color(255, 255, 255));
+        batteryLabel.setText("Battery:");
 
         javax.swing.GroupLayout panelToolsLayout = new javax.swing.GroupLayout(panelTools);
         panelTools.setLayout(panelToolsLayout);
@@ -467,45 +526,52 @@ public class SolarPanel extends AbstractToolAndApplication {
                     .addGroup(panelToolsLayout.createSequentialGroup()
                         .addContainerGap()
                         .addComponent(testButton, javax.swing.GroupLayout.PREFERRED_SIZE, 99, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(18, 18, 18)
+                        .addGap(111, 111, 111)
+                        .addComponent(batteryLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 49, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(371, 371, 371)))
+                .addGap(1, 1, 1))
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, panelToolsLayout.createSequentialGroup()
+                .addGap(0, 0, Short.MAX_VALUE)
+                .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                    .addComponent(batteryValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 184, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addGroup(panelToolsLayout.createSequentialGroup()
                         .addComponent(lintLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
                         .addGap(0, 0, 0)
                         .addComponent(lintValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)
                         .addGap(30, 30, 30)
                         .addComponent(poutLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 0, 0)
-                        .addComponent(poutValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 50, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 0, 0)
-                        .addComponent(poutWLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(30, 30, 30)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(poutValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 104, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(18, 18, 18)
                         .addComponent(rintLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
                         .addGap(0, 0, 0)
-                        .addComponent(rintValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(60, 60, 60)
-                        .addComponent(angleLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 47, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 0, 0)
-                        .addComponent(angleValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 44, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 0, 0)
-                        .addComponent(angleDegLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 25, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                .addGap(1, 1, 1))
+                        .addComponent(rintValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                .addGap(60, 60, 60)
+                .addComponent(angleLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 47, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(angleValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 63, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap())
         );
         panelToolsLayout.setVerticalGroup(
             panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(panelToolsLayout.createSequentialGroup()
                 .addComponent(sunSlider, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 418, Short.MAX_VALUE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 400, Short.MAX_VALUE)
                 .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
-                    .addComponent(testButton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(lintLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(lintValueLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(rintLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(rintValueLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(angleDegLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(poutLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(poutWLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(poutValueLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(poutValueLabel)
                     .addComponent(angleLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(angleValueLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addComponent(testButton)
+                    .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                        .addComponent(batteryLabel)
+                        .addComponent(batteryValueLabel)))
                 .addContainerGap())
         );
 
@@ -532,14 +598,11 @@ public class SolarPanel extends AbstractToolAndApplication {
         sunPos = sunSlider.getValue();
         changeBackgroundColor();
 
-        double mid = sunSlider.getMaximum()/2;
-        if(sunPos <= mid)
-        panelAngle = -(mid-sunPos)/45;
-        else
-        panelAngle = (sunSlider.getMaximum()-sunPos)/45.0;
+        // TEST
+        angleValueLabel.setText(String.format("%.2fº", getSunDegrees()));
 
-        angleValueLabel.setText(String.format("%.2f", panelAngle));
-
+        // TEST
+        java.awt.geom.Line2D solarPanelLine = new java.awt.geom.Line2D.Double(170,400,470,400);;
         Graphics2D g = (Graphics2D)this.getGraphics();
         g.setStroke(new java.awt.BasicStroke(5.0f));
         g.setColor(Color.BLUE);
@@ -548,15 +611,49 @@ public class SolarPanel extends AbstractToolAndApplication {
         java.awt.geom.AffineTransform at =
         java.awt.geom.AffineTransform.getRotateInstance(
             Math.toRadians(panelAngle), solarPanelLine.getX1(), solarPanelLine.getY1());
-
         g.draw(at.createTransformedShape(solarPanelLine));
 
     }//GEN-LAST:event_sunSliderStateChanged
 
+    /**
+     * Set the battery level to the desired porcentage
+     * @param percentage if < 0, return without changes, if > 100 set full battery
+     */
+    private void setBatteryLevel(int percentage) {
+        if(percentage <=0)
+            return;
+        if(percentage > 100)
+        {
+            batteryCapacity = MAX_BATTERY_CAPACITY;
+            return;
+        }
+        batteryCapacity = (int)(MAX_BATTERY_CAPACITY * percentage/100.0);
+    }
+    
+    /**
+     * Computes the Sun position between [0º, 180º] (slider on left/right for min and max values)
+     * @return the Sun position in degrees or -1 if Sun is in the dark side
+     */
+    private double getSunDegrees() {
+        sunPos = sunSlider.getValue();
+        if(isDark())
+            return -1;
+        else
+            return (sunPos-SUN_SHADE_SLIDER_LIMITS)*sliderToDegrees;
+    }
+    
+    /**
+     * Check if the current slider position is within the "back side" of the panel
+     * @return true if the slider is in the left or right margin determined as out of sight
+     */
     private boolean isDark() {
         return sunPos<SUN_SHADE_SLIDER_LIMITS || sunPos>sunSlider.getMaximum()-SUN_SHADE_SLIDER_LIMITS;
     }
     
+    /**
+     * Set the background color of the frame depending on the slider position.
+     * It goes from black to yellow back to black
+     */
     private void changeBackgroundColor() {
         int sp = sunPos;
         if(isDark())
@@ -602,19 +699,18 @@ public class SolarPanel extends AbstractToolAndApplication {
     }
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
-    private javax.swing.JLabel angleDegLabel;
     private javax.swing.JLabel angleLabel;
     javax.swing.JLabel angleValueLabel;
+    private javax.swing.JLabel batteryLabel;
+    javax.swing.JLabel batteryValueLabel;
     private javax.swing.JLabel lintLabel;
     javax.swing.JLabel lintValueLabel;
     javax.swing.JPanel panelTools;
     private javax.swing.JLabel poutLabel;
     javax.swing.JLabel poutValueLabel;
-    private javax.swing.JLabel poutWLabel;
     private javax.swing.JLabel rintLabel;
     javax.swing.JLabel rintValueLabel;
     javax.swing.JSlider sunSlider;
     javax.swing.JButton testButton;
     // End of variables declaration//GEN-END:variables
-    java.awt.geom.Line2D solarPanelLine = new java.awt.geom.Line2D.Double(170,400,470,400);;
 }
