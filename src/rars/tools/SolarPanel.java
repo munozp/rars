@@ -21,7 +21,7 @@ import java.awt.event.ActionListener;
 public class SolarPanel extends AbstractToolAndApplication {
 
     private static final String TOOLNAME = "Solar Panel";
-    private static final String VERSION = "0.5";
+    private static final String VERSION = "0.9";
     
     /** Memory addreses for the MMIO */
     static final int MEM_IO_WRITE_POWER   = Memory.memoryMapBaseAddress + 0x00;
@@ -56,6 +56,8 @@ public class SolarPanel extends AbstractToolAndApplication {
     static final int MAX_PANEL_ANGLE = 30000;
     /** Limit values of the slider that implies no Sun coverage */
     static final int SUN_SHADE_SLIDER_LIMITS = 50;
+    /** Thickness of the displayed solar panel */
+    static final int PANEL_STROKE = 5;
     /** Current battery capacity in mW */
     double batteryLevel = 0;
     /** Current output power from solar panel in mW */
@@ -74,8 +76,8 @@ public class SolarPanel extends AbstractToolAndApplication {
     MotorMovement motor;
     /** Automatic Sun movment for test (single run per TEST) */
     SunTest test;
-    /** The line representing the solar panel */
-    java.awt.geom.Line2D solarPanelLine;
+    /** The coords for the line representing the solar panel */
+    int[] solarPanelLine;
     
     /**
      * Constructor. Set the tool name and version
@@ -102,9 +104,12 @@ public class SolarPanel extends AbstractToolAndApplication {
     @Override
     protected JComponent buildMainDisplayArea() {
         initComponents();
-        setBatteryLevel(INITIAL_BATTERY_PCT);
         outputPower = 0;
         panelAngle = 0;
+        // The solar panel line components (x,y,length)
+        int lineWidth = this.getWidth()/4;
+        solarPanelLine = new int[]{this.getWidth()/2,this.getHeight()-250,lineWidth};
+        setBatteryLevel(INITIAL_BATTERY_PCT);
         angleValueLabel.setText("0º");
         int maxs = sunSlider.getMaximum();
         sunSlider.setValue(maxs/4);
@@ -115,10 +120,6 @@ public class SolarPanel extends AbstractToolAndApplication {
         sensors = new SensorsThread();   
         battery.start();
         sensors.start();
-        // The solar panel line
-        int halfLineWidth = this.getWidth()/4;
-        solarPanelLine = new java.awt.geom.Line2D.Double(this.getWidth()/2-halfLineWidth,
-                this.getHeight()-200,this.getWidth()/2+halfLineWidth,this.getHeight()-200);      
         return panelTools;
     }
     
@@ -368,28 +369,29 @@ public class SolarPanel extends AbstractToolAndApplication {
             double mspermd = MOTOR_SPEED/1000.0;
             // Set graphics for painting solar panel
             Graphics2D g = (Graphics2D)panelTools.getGraphics();
-            g.setStroke(new java.awt.BasicStroke(5.0f));
+            g.setStroke(new BasicStroke(PANEL_STROKE, BasicStroke.CAP_SQUARE, BasicStroke.JOIN_ROUND));
             g.setColor(Color.BLUE);
             do{
                 try{
                     delay = System.currentTimeMillis();
-                    // UPDATE MMIO for motor position in milli-degrees
                     panelAngle += dir;
                     steps -= dir;
+                    // For some reason, this can happen
+                    if(panelAngle < MIN_PANEL_ANGLE || panelAngle > MAX_PANEL_ANGLE)
+                    {
+                        panelAngle += dir;
+                        steps = 0;
+                    }
+                    // UPDATE MMIO for motor position in milli-degrees
                     updateMMIOControlAndData(MEM_IO_WRITE_ANGLE, panelAngle);
                     angleValueLabel.setText(String.format("%.3fº", panelAngle/1000.0));
-                    // TODO UPDATE HOW LINE IS DRAW
-                    // Draw solar panel
-                    java.awt.geom.AffineTransform at =
-                    java.awt.geom.AffineTransform.getRotateInstance(
-                        Math.toRadians(panelAngle/1000), solarPanelLine.getX1(), solarPanelLine.getY1());
-                    g.draw(at.createTransformedShape(solarPanelLine));
                     // Check if movement completed
                     isMoving = steps != 0;
                     delay = System.currentTimeMillis()-delay;
                     delay = ((long)mspermd-delay)/SPEED_FACTOR;
                     delay = delay>0? delay:1;
-                    this.sleep(delay);                    
+                    this.sleep(delay);
+                    updateCanvas();
                 }catch(InterruptedException ex) {
                     System.out.println("Error on sleep for MotorMovement run()");
                     System.out.println(ex.toString());
@@ -498,6 +500,7 @@ public class SolarPanel extends AbstractToolAndApplication {
         batteryValueLabel = new javax.swing.JLabel();
         batteryLabel = new javax.swing.JLabel();
         movementLabel = new javax.swing.JLabel();
+        canvas = new java.awt.Canvas();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
         setTitle("Solar Panel");
@@ -581,45 +584,50 @@ public class SolarPanel extends AbstractToolAndApplication {
         panelTools.setLayout(panelToolsLayout);
         panelToolsLayout.setHorizontalGroup(
             panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, panelToolsLayout.createSequentialGroup()
-                .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
-                    .addComponent(sunSlider, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.DEFAULT_SIZE, 635, Short.MAX_VALUE)
-                    .addGroup(panelToolsLayout.createSequentialGroup()
-                        .addContainerGap()
-                        .addComponent(testButton, javax.swing.GroupLayout.PREFERRED_SIZE, 99, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(400, 400, 400)
-                        .addComponent(movementLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 121, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                .addGap(1, 1, 1))
-            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, panelToolsLayout.createSequentialGroup()
-                .addGap(0, 0, Short.MAX_VALUE)
-                .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
-                    .addGroup(panelToolsLayout.createSequentialGroup()
-                        .addComponent(batteryLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 49, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(batteryValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 184, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addGroup(panelToolsLayout.createSequentialGroup()
-                        .addComponent(lintLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 0, 0)
-                        .addComponent(lintValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(18, 18, 18)
-                        .addComponent(poutLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(poutValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 104, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(18, 18, 18)
-                        .addComponent(rintLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 0, 0)
-                        .addComponent(rintValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                .addGap(60, 60, 60)
-                .addComponent(angleLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 47, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(angleValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 63, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap())
+            .addGroup(panelToolsLayout.createSequentialGroup()
+                .addContainerGap()
+                .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, panelToolsLayout.createSequentialGroup()
+                        .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                            .addGroup(panelToolsLayout.createSequentialGroup()
+                                .addComponent(testButton, javax.swing.GroupLayout.PREFERRED_SIZE, 99, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                                .addComponent(batteryLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 49, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(batteryValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 184, javax.swing.GroupLayout.PREFERRED_SIZE))
+                            .addGroup(panelToolsLayout.createSequentialGroup()
+                                .addComponent(lintLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addGap(0, 0, 0)
+                                .addComponent(lintValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addGap(18, 18, 18)
+                                .addComponent(poutLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(poutValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 104, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addGap(18, 18, 18)
+                                .addComponent(rintLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 36, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addGap(0, 0, 0)
+                                .addComponent(rintValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                        .addGap(60, 60, 60)
+                        .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                            .addGroup(panelToolsLayout.createSequentialGroup()
+                                .addComponent(angleLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 47, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(angleValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 63, javax.swing.GroupLayout.PREFERRED_SIZE))
+                            .addComponent(movementLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                        .addGap(1, 1, 1))
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, panelToolsLayout.createSequentialGroup()
+                        .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                            .addComponent(sunSlider, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                            .addComponent(canvas, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                        .addContainerGap())))
         );
         panelToolsLayout.setVerticalGroup(
             panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(panelToolsLayout.createSequentialGroup()
                 .addComponent(sunSlider, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addGap(393, 393, 393)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(canvas, javax.swing.GroupLayout.PREFERRED_SIZE, 373, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
                     .addComponent(lintLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(lintValueLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
@@ -629,12 +637,13 @@ public class SolarPanel extends AbstractToolAndApplication {
                     .addComponent(poutValueLabel)
                     .addComponent(angleLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(angleValueLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGap(0, 0, 0)
                 .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(batteryValueLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(batteryLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addGroup(panelToolsLayout.createSequentialGroup()
-                        .addComponent(testButton)
+                        .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                            .addComponent(batteryValueLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 37, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addComponent(batteryLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                            .addComponent(testButton))
                         .addGap(0, 0, Short.MAX_VALUE))
                     .addComponent(movementLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
                 .addContainerGap())
@@ -662,6 +671,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     private void sunSliderStateChanged(javax.swing.event.ChangeEvent evt) {//GEN-FIRST:event_sunSliderStateChanged
         sunPos = sunSlider.getValue();
         changeBackgroundColor();
+        updateCanvas();
     }//GEN-LAST:event_sunSliderStateChanged
     
     /**
@@ -736,7 +746,33 @@ public class SolarPanel extends AbstractToolAndApplication {
                 sp = (int)((sunSlider.getMaximum()-sp)/mid*255);
         }
         Color bc = new Color(sp, sp, 0);
-        panelTools.setBackground(bc);
+        canvas.setBackground(bc);
+    }
+    
+    /**
+     * Draw the solar panel line
+     */
+    public void updateCanvas() {
+        Graphics2D g = (Graphics2D)canvas.getGraphics();
+        canvas.paint(g);
+        g.setColor(Color.BLUE);
+        g.setStroke(new BasicStroke(PANEL_STROKE, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        // Compute right side and draw
+        int startX = solarPanelLine[0];
+        int startY = solarPanelLine[1];
+        int length = solarPanelLine[2];
+        int endX = startX + (int)(Math.cos(Math.toRadians(panelAngle/1000)) * length);
+        int endY = startY + (int)(Math.sin(Math.toRadians(panelAngle/1000)) * length);
+        g.drawLine(startX, startY, endX, endY);
+        // Compute left side and draw
+        endX = startX - (int)(Math.cos(Math.toRadians(panelAngle/1000)) * length);
+        endY = startY - (int)(Math.sin(Math.toRadians(panelAngle/1000)) * length);
+        g.drawLine(startX, startY, endX, endY);
+        // Support point
+        int ts = PANEL_STROKE*3;
+        int[] vx = new int[]{startX, startX-ts, startX+ts};
+        int[] vy = new int[]{startY, startY+ts, startY+ts};
+        g.fillPolygon(vx, vy, 3);
     }
     
     /**
@@ -769,18 +805,19 @@ public class SolarPanel extends AbstractToolAndApplication {
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JLabel angleLabel;
-    javax.swing.JLabel angleValueLabel;
+    private javax.swing.JLabel angleValueLabel;
     private javax.swing.JLabel batteryLabel;
-    javax.swing.JLabel batteryValueLabel;
+    private javax.swing.JLabel batteryValueLabel;
+    private java.awt.Canvas canvas;
     private javax.swing.JLabel lintLabel;
-    javax.swing.JLabel lintValueLabel;
+    private javax.swing.JLabel lintValueLabel;
     private javax.swing.JLabel movementLabel;
-    javax.swing.JPanel panelTools;
+    private javax.swing.JPanel panelTools;
     private javax.swing.JLabel poutLabel;
-    javax.swing.JLabel poutValueLabel;
+    private javax.swing.JLabel poutValueLabel;
     private javax.swing.JLabel rintLabel;
-    javax.swing.JLabel rintValueLabel;
-    javax.swing.JSlider sunSlider;
-    javax.swing.JButton testButton;
+    private javax.swing.JLabel rintValueLabel;
+    private javax.swing.JSlider sunSlider;
+    private javax.swing.JButton testButton;
     // End of variables declaration//GEN-END:variables
 }

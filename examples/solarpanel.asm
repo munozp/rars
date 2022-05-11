@@ -11,11 +11,6 @@ loop:
 	addi a4, a4, 1000
 	sw a4, 0(a2 ) # Write IO
 
-     # Sleep for 1s
-	li a0, 10000
-	li a7, 32
-	ecall
-
 	j	loop
 
 done:
