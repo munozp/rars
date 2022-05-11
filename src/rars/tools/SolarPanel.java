@@ -21,13 +21,14 @@ import java.awt.event.ActionListener;
 public class SolarPanel extends AbstractToolAndApplication {
 
     private static final String TOOLNAME = "Solar Panel";
-    private static final String VERSION = "0.1";
+    private static final String VERSION = "0.5";
     
     /** Memory addreses for the MMIO */
     static final int MEM_IO_WRITE_POWER   = Memory.memoryMapBaseAddress + 0x00;
-    static final int MEM_IO_WRITE_SENSORS = Memory.memoryMapBaseAddress + 0x01;
-    static final int MEM_IO_WRITE_ANGLE   = Memory.memoryMapBaseAddress + 0x02;
-    static final int MEM_IO_READ_COMMAND  = Memory.memoryMapBaseAddress + 0x03;    
+    static final int MEM_IO_WRITE_SENSORS = Memory.memoryMapBaseAddress + 0x20;
+    static final int MEM_IO_WRITE_ANGLE   = Memory.memoryMapBaseAddress + 0x40;
+    static final int MEM_IO_READ_COMMAND  = Memory.memoryMapBaseAddress + 0x60;
+    static final int MEM_IO_WRITE_BATTERY = Memory.memoryMapBaseAddress + 0x80;
   
     /** Simulation speed factor for time computations */
     static final int SPEED_FACTOR = 1;
@@ -56,7 +57,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Limit values of the slider that implies no Sun coverage */
     static final int SUN_SHADE_SLIDER_LIMITS = 50;
     /** Current battery capacity in mW */
-    double batteryCapacity = 0;
+    double batteryLevel = 0;
     /** Current output power from solar panel in mW */
     double outputPower = 0;
     /** Current solar panel angle in milli-degrees, between MIN_PANEL_ANGLE and MAX_PANEL_ANGLE */
@@ -73,6 +74,8 @@ public class SolarPanel extends AbstractToolAndApplication {
     MotorMovement motor;
     /** Automatic Sun movment for test (single run per TEST) */
     SunTest test;
+    /** The line representing the solar panel */
+    java.awt.geom.Line2D solarPanelLine;
     
     /**
      * Constructor. Set the tool name and version
@@ -112,6 +115,10 @@ public class SolarPanel extends AbstractToolAndApplication {
         sensors = new SensorsThread();   
         battery.start();
         sensors.start();
+        // The solar panel line
+        int halfLineWidth = this.getWidth()/4;
+        solarPanelLine = new java.awt.geom.Line2D.Double(this.getWidth()/2-halfLineWidth,
+                this.getHeight()-200,this.getWidth()/2+halfLineWidth,this.getHeight()-200);      
         return panelTools;
     }
     
@@ -189,9 +196,16 @@ public class SolarPanel extends AbstractToolAndApplication {
             int a = memAccNotice.getAddress();
             if (a != MEM_IO_READ_COMMAND)
                 return;
-            int value = memAccNotice.getValue();
-            // TODO CREATE NEW MotorMovement AND RUN IT
+            int command = memAccNotice.getValue();
             // No commands are accepted while motor is running
+            if(motor == null || (!motor.isMoving && command >= MIN_PANEL_ANGLE && command <= MAX_PANEL_ANGLE))
+            {
+                System.out.println(command);
+                motor = new MotorMovement(command);
+                motor.start();
+            }
+            else
+                System.out.println("Motor moving or requested angle out of limits");
         }
     }
     
@@ -207,7 +221,6 @@ public class SolarPanel extends AbstractToolAndApplication {
                 Globals.memory.setRawWord(dataAddr, dataValue);
             } catch (AddressErrorException aee) {
                 System.out.println("Tool author specified incorrect MMIO address!" + aee);
-                System.exit(0);
             }
         } finally {
             Globals.memoryAndRegistersLock.unlock();
@@ -256,26 +269,24 @@ public class SolarPanel extends AbstractToolAndApplication {
                         // Increase battery level, charge is Ah
                         charge = outputPower / BUS_VOLTAGE; 
                         charge = charge*BATTERY_FREQUENCY/3600000*SPEED_FACTOR;
-                        batteryCapacity += charge*1000; // Battery in mAh
-                        if(batteryCapacity > MAX_BATTERY_CAPACITY)
-                            batteryCapacity = MAX_BATTERY_CAPACITY;
+                        batteryLevel += charge*1000; // Battery in mAh
+                        if(batteryLevel > MAX_BATTERY_CAPACITY)
+                            batteryLevel = MAX_BATTERY_CAPACITY;
                     }
                     else // Overrides battery level
                     {
-                        batteryCapacity = newBatteryLevel*1000;
+                        batteryLevel = newBatteryLevel*1000;
                         newBatteryLevel = -1;
                     }
-                    // UPDATE MMIO for output power in mWh
-                    int pout = (int)outputPower;
-                    // TODO UNCOMMENT BELOW!
-                    //updateMMIOControlAndData(MEM_IO_WRITE_POWER, pout);
+                    // UPDATE MMIO for output power in mWh and battery in mAh
+                    updateMMIOControlAndData(MEM_IO_WRITE_POWER, (int)outputPower);
+                    updateMMIOControlAndData(MEM_IO_WRITE_BATTERY, (int)batteryLevel);
                     // Update labels
                     poutValueLabel.setText(String.format("%.3f Wh", outputPower/1000)); //Wh
-                    batteryValueLabel.setText(String.format("%.3f Ah (%.2f%%)", batteryCapacity/1000, batteryCapacity/MAX_BATTERY_CAPACITY*100)); //Ah (%)
+                    batteryValueLabel.setText(String.format("%.3f Ah (%.2f%%)", batteryLevel/1000, batteryLevel/MAX_BATTERY_CAPACITY*100)); //Ah (%)
                     // Wait till next update
-                    delay = System.currentTimeMillis()-delay;
-                    delay = delay>0? delay:1;
-                    this.sleep((BATTERY_FREQUENCY-delay)/SPEED_FACTOR);
+                    delay = getDelay(delay, SENSORS_FREQUENCY);
+                    this.sleep(delay);
                 } catch (InterruptedException ex) {
                     finish = true;
                 }
@@ -316,12 +327,9 @@ public class SolarPanel extends AbstractToolAndApplication {
                     // Write MMIO for sensors 16bits for Left and 16 for Rigth (in C2)
                     lval = lval<<16;
                     rval = rval&0x0000ffff;
-                    int lrsensors = lval|rval;
-                    // TODO UNCOMMENT BELOW!
-                    //updateMMIOControlAndData(MEM_IO_WRITE_SENSORS, lrsensors);
-                    delay = System.currentTimeMillis()-delay;
-                    delay = delay>0? delay:1;
-                    this.sleep((SENSORS_FREQUENCY-delay)/SPEED_FACTOR);
+                    updateMMIOControlAndData(MEM_IO_WRITE_SENSORS, (lval|rval));
+                    delay = getDelay(delay, SENSORS_FREQUENCY);
+                    this.sleep(delay);
                 }catch(InterruptedException ex) {
                     System.out.println("Error on sleep for SensorsThread run()");
                     System.out.println(ex.toString());
@@ -333,41 +341,55 @@ public class SolarPanel extends AbstractToolAndApplication {
     
     private class MotorMovement extends Thread {
         
-        private int nextAngle;
+        private final int nextAngle;
         private boolean isMoving;
         
         /**
          * @param newpos new panel angle in milli-degrees
          */
         public MotorMovement(int newpos) {
-            if(newpos < MIN_PANEL_ANGLE || newpos > MAX_PANEL_ANGLE)
-                nextAngle = newpos;
-            else
-                nextAngle = MAX_PANEL_ANGLE+1;
+            nextAngle = newpos;
+        }
+        
+        public boolean isMoving() {
+            return isMoving;
         }
         
         @Override
         public void run() {
+            // Check if next angle is valid
+            if(nextAngle < MIN_PANEL_ANGLE || nextAngle > MAX_PANEL_ANGLE)
+                return;
             long delay;
             isMoving = true;
             movementLabel.setText("Moving");
             int steps = nextAngle - panelAngle;
             int dir = (nextAngle - panelAngle)>0?1:-1;
             double mspermd = MOTOR_SPEED/1000.0;
+            // Set graphics for painting solar panel
+            Graphics2D g = (Graphics2D)panelTools.getGraphics();
+            g.setStroke(new java.awt.BasicStroke(5.0f));
+            g.setColor(Color.BLUE);
             do{
                 try{
                     delay = System.currentTimeMillis();
                     // UPDATE MMIO for motor position in milli-degrees
                     panelAngle += dir;
-                    // TODO UNCOMMENT BELOW!
-                    //updateMMIOControlAndData(MEM_IO_WRITE_ANGLE, panelAngle);
-                    angleValueLabel.setText(String.format("%.2fº", panelAngle*1000.0));
                     steps -= dir;
+                    updateMMIOControlAndData(MEM_IO_WRITE_ANGLE, panelAngle);
+                    angleValueLabel.setText(String.format("%.3fº", panelAngle/1000.0));
+                    // TODO UPDATE HOW LINE IS DRAW
+                    // Draw solar panel
+                    java.awt.geom.AffineTransform at =
+                    java.awt.geom.AffineTransform.getRotateInstance(
+                        Math.toRadians(panelAngle/1000), solarPanelLine.getX1(), solarPanelLine.getY1());
+                    g.draw(at.createTransformedShape(solarPanelLine));
+                    // Check if movement completed
                     isMoving = steps != 0;
                     delay = System.currentTimeMillis()-delay;
                     delay = ((long)mspermd-delay)/SPEED_FACTOR;
                     delay = delay>0? delay:1;
-                    this.sleep(delay);
+                    this.sleep(delay);                    
                 }catch(InterruptedException ex) {
                     System.out.println("Error on sleep for MotorMovement run()");
                     System.out.println(ex.toString());
@@ -410,7 +432,7 @@ public class SolarPanel extends AbstractToolAndApplication {
                 int df = dur/(max-min-2*SUN_SHADE_SLIDER_LIMITS);
                 df = (df>=0)?df:1;
                 long ct = System.currentTimeMillis();
-                charge[c] = batteryCapacity;
+                charge[c] = batteryLevel;
                 // Cycle execution
                 for(int p=min; p<max; p++)
                 {
@@ -431,7 +453,7 @@ public class SolarPanel extends AbstractToolAndApplication {
                 }
                 // Store cycle duration in ms and charge in mW
                 duration[c] = (System.currentTimeMillis()-ct)*SPEED_FACTOR;
-                charge[c] = batteryCapacity-charge[c];
+                charge[c] = batteryLevel-charge[c];
             }
             // Generate results
             String results = "";
@@ -640,24 +662,20 @@ public class SolarPanel extends AbstractToolAndApplication {
     private void sunSliderStateChanged(javax.swing.event.ChangeEvent evt) {//GEN-FIRST:event_sunSliderStateChanged
         sunPos = sunSlider.getValue();
         changeBackgroundColor();
-
-        // TEST
-        angleValueLabel.setText(String.format("%.2fº", getSunDegrees()));
-
-        // TEST
-        java.awt.geom.Line2D solarPanelLine = new java.awt.geom.Line2D.Double(170,400,470,400);;
-        Graphics2D g = (Graphics2D)this.getGraphics();
-        g.setStroke(new java.awt.BasicStroke(5.0f));
-        g.setColor(Color.BLUE);
-        solarPanelLine.setLine(170,400,470,400);
-
-        java.awt.geom.AffineTransform at =
-        java.awt.geom.AffineTransform.getRotateInstance(
-            Math.toRadians(panelAngle/1000), solarPanelLine.getX1(), solarPanelLine.getY1());
-        g.draw(at.createTransformedShape(solarPanelLine));
-
     }//GEN-LAST:event_sunSliderStateChanged
-
+    
+    /**
+     * @param prevTmstp previous currentTimeMillis
+     * @param freq desired frequency
+     * @return milliseconds to sleep a thread
+     */
+    private long getDelay(long prevTmstp, long freq) {
+        long delay = System.currentTimeMillis()-prevTmstp;
+        delay = freq-delay;
+        delay = delay>0? delay:1;
+        return delay/SPEED_FACTOR;
+    }
+    
     /**
      * Set the battery level to the desired porcentage
      * @param percentage if < 0, return without changes, if > 100 set full battery
@@ -667,10 +685,10 @@ public class SolarPanel extends AbstractToolAndApplication {
             return;
         if(percentage > 100)
         {
-            batteryCapacity = MAX_BATTERY_CAPACITY;
+            batteryLevel = MAX_BATTERY_CAPACITY;
             return;
         }
-        batteryCapacity = (int)(MAX_BATTERY_CAPACITY * percentage/100.0);
+        batteryLevel = (int)(MAX_BATTERY_CAPACITY * percentage/100.0);
     }
     
     /**
