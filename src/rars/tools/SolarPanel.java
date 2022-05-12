@@ -36,6 +36,8 @@ public class SolarPanel extends AbstractToolAndApplication {
     static final int BATTERY_FREQUENCY = 200;
     /** Sensors thread frequency in milliseconds */
     static final int SENSORS_FREQUENCY = 200;
+    /** Sensor max value (sensor in [0..MAX_S_VAL] */
+    static final int MAX_SENSOR_VALUE = 255;
     /** Test time in seconds */
     static final int TEST_DURATION = 10;
     /** Number of cicles to repeat the test */
@@ -143,6 +145,12 @@ public class SolarPanel extends AbstractToolAndApplication {
             motor.interrupt();
         if(test != null)
             test.interrupt();
+        try{
+            battery.join(BATTERY_FREQUENCY);
+            sensors.join(SENSORS_FREQUENCY);
+        }catch(InterruptedException ex) {
+            System.out.println("Reset: "+ex.toString());
+        }
         buildMainDisplayArea();
     }
     
@@ -158,13 +166,15 @@ public class SolarPanel extends AbstractToolAndApplication {
     protected JComponent getHelpComponent() {
         // TODO UPDATE HELP INFO
         final String helpContent =
-            "Use this tool to simulate the Memory Mapped IO (MMIO) for controlling a solar panel. " +
-            "While this tool is connected to the program it runs a clock (starting from time 0), storing the time in milliseconds. " +
-            "The memory directions are:\n" +
-            "Read the command motor: "+ Binary.intToHexString(MEM_IO_READ_COMMAND) + "\n" + 
-            "Write the motor position (solar panel angle):" + Binary.intToHexString(MEM_IO_WRITE_ANGLE) + "\n" +
-            "Write the output power of the solar panel: "+ Binary.intToHexString(MEM_IO_WRITE_POWER) + "\n" +
-            "Write the sensors measurement: "+ Binary.intToHexString(MEM_IO_WRITE_SENSORS); 
+            "Use this tool to simulate the Memory Mapped IO (MMIO) for controlling a solar panel.\n"+
+            "\nMMIO addresses:\n" +
+            Binary.intToHexString(MEM_IO_WRITE_POWER)+" > Output power of the solar panel (mWh) (Nominal power: "+MAX_OUTPUT_POWER/1000+"Wh)\n"+
+            Binary.intToHexString(MEM_IO_WRITE_SENSORS)+" > Sensors measurement [0,"+MAX_SENSOR_VALUE+"]. 16bits left sensor | 16bits right sensor\n"+ 
+            Binary.intToHexString(MEM_IO_WRITE_ANGLE)+" > Solar panel angle position in ["+MIN_PANEL_ANGLE+","+MAX_PANEL_ANGLE+"] millidegrees\n"+
+            Binary.intToHexString(MEM_IO_READ_COMMAND)+" < Next panel position in millidegrees. Motor speed is "+String.format("%.3f",MOTOR_SPEED/1000.0)+"º/s\n"+
+            Binary.intToHexString(MEM_IO_WRITE_BATTERY)+" > Current battery level (mAh) (Max battery capacity: "+MAX_BATTERY_CAPACITY/1000+"Ah)\n"+
+            "\nAll values are expressed in C2."    
+        ;
         JButton help = new JButton("Help");
         help.addActionListener(
                 new ActionListener() {
@@ -267,7 +277,7 @@ public class SolarPanel extends AbstractToolAndApplication {
                             outputPower = 0;
                         else
                             outputPower = (int)(Math.sin(Math.toRadians(delta))*MAX_OUTPUT_POWER);
-                        // Increase battery level, charge is Ah
+                        // Increase battery level, charge is mAh
                         charge = outputPower / BUS_VOLTAGE; 
                         charge = charge*BATTERY_FREQUENCY/3600000*SPEED_FACTOR;
                         batteryLevel += charge*1000; // Battery in mAh
@@ -310,6 +320,10 @@ public class SolarPanel extends AbstractToolAndApplication {
             int lval;
             int rval;
             long delay;
+            double incidence;
+            double logf;
+            double ll = 2;
+            double cf = MAX_SENSOR_VALUE / ll;
             do{
                 try{
                     delay = System.currentTimeMillis();
@@ -318,10 +332,23 @@ public class SolarPanel extends AbstractToolAndApplication {
                         lval = 0;
                         rval = 0;
                     }
-                    else // TODO PERFORM REAL COMPUTATION
+                    else
                     {
-                        lval = (int)(Math.sin(sunPos)*10) * (int)(Math.cos(panelAngle)*10);
-                        rval = (int)(Math.sin(sunPos)*10) * (int)(Math.cos(panelAngle)*10);   
+                        incidence = getIncidenceAngle();
+                        if(incidence < 90)
+                        {
+                            logf = Math.log(incidence/90.0)+ll;                            
+                            lval = MAX_SENSOR_VALUE;
+                            rval = (int)(logf*cf);
+                            rval = rval<0? 0:rval;
+                        }
+                        else
+                        {
+                            logf = Math.log((180-incidence)/90.0)+ll;
+                            lval = (int)(logf*cf);
+                            lval = lval<0? 0:lval;
+                            rval = MAX_SENSOR_VALUE;
+                        }
                     }
                     lintValueLabel.setText(String.valueOf(lval));
                     rintValueLabel.setText(String.valueOf(rval));
@@ -671,6 +698,11 @@ public class SolarPanel extends AbstractToolAndApplication {
     private void sunSliderStateChanged(javax.swing.event.ChangeEvent evt) {//GEN-FIRST:event_sunSliderStateChanged
         sunPos = sunSlider.getValue();
         changeBackgroundColor();
+        // Test code to use slider as panel angle controller
+        //double mdegtick = (double)(MAX_PANEL_ANGLE-MIN_PANEL_ANGLE)/sunSlider.getMaximum();
+        //panelAngle = (int)((sunPos*mdegtick)+MIN_PANEL_ANGLE);
+        //angleValueLabel.setText(String.format("%dº",panelAngle/1000));
+        // End of test code
         updateCanvas();
     }//GEN-LAST:event_sunSliderStateChanged
     
@@ -755,24 +787,29 @@ public class SolarPanel extends AbstractToolAndApplication {
     public void updateCanvas() {
         Graphics2D g = (Graphics2D)canvas.getGraphics();
         canvas.paint(g);
-        g.setColor(Color.BLUE);
         g.setStroke(new BasicStroke(PANEL_STROKE, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        // Compute right side and draw
+        // Compute right side
         int startX = solarPanelLine[0];
         int startY = solarPanelLine[1];
         int length = solarPanelLine[2];
-        int endX = startX + (int)(Math.cos(Math.toRadians(panelAngle/1000)) * length);
-        int endY = startY + (int)(Math.sin(Math.toRadians(panelAngle/1000)) * length);
-        g.drawLine(startX, startY, endX, endY);
-        // Compute left side and draw
-        endX = startX - (int)(Math.cos(Math.toRadians(panelAngle/1000)) * length);
-        endY = startY - (int)(Math.sin(Math.toRadians(panelAngle/1000)) * length);
-        g.drawLine(startX, startY, endX, endY);
+        int endXr = startX + (int)(Math.cos(Math.toRadians(panelAngle/1000)) * length);
+        int endYr = startY + (int)(Math.sin(Math.toRadians(panelAngle/1000)) * length);
+        // Compute left side
+        int endXl = startX - (int)(Math.cos(Math.toRadians(panelAngle/1000)) * length);
+        int endYl = startY - (int)(Math.sin(Math.toRadians(panelAngle/1000)) * length);
+        // Sensors
+        g.setColor(Color.GREEN);
+        g.fillRoundRect(endXl-PANEL_STROKE, endYl-PANEL_STROKE, PANEL_STROKE*2, PANEL_STROKE*2, PANEL_STROKE, PANEL_STROKE*2);
+        g.fillRoundRect(endXr-PANEL_STROKE, endYr-PANEL_STROKE, PANEL_STROKE*2, PANEL_STROKE*2, PANEL_STROKE, PANEL_STROKE*2);
         // Support point
         int ts = PANEL_STROKE*3;
         int[] vx = new int[]{startX, startX-ts, startX+ts};
         int[] vy = new int[]{startY, startY+ts, startY+ts};
         g.fillPolygon(vx, vy, 3);
+        // Solar panel
+        g.setColor(Color.BLUE);
+        g.drawLine(startX, startY, endXl, endYl);
+        g.drawLine(startX, startY, endXr, endYr);
     }
     
     /**
