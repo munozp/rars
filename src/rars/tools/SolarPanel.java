@@ -31,7 +31,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     static final int MEM_IO_WRITE_BATTERY = Memory.memoryMapBaseAddress + 0x80;
   
     /** Simulation speed factor for time computations */
-    static final int SPEED_FACTOR = 1;
+    static int SPEED_FACTOR = 1;
     /** Battery thread frequency in milliseconds */
     static final int BATTERY_FREQUENCY = 200;
     /** Sensors thread frequency in milliseconds */
@@ -39,13 +39,13 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Sensor max value (sensor in [0..MAX_S_VAL] */
     static final int MAX_SENSOR_VALUE = 255;
     /** Test time in seconds */
-    static final int TEST_DURATION = 10;
+    static int TEST_DURATION = 10;
     /** Number of cicles to repeat the test */
-    static final int TEST_CYCLES = 3;
+    static int TEST_CYCLES = 3;
     /** Motor speed in milli-degrees per second */
-    static final int MOTOR_SPEED = 100;
+    static int MOTOR_SPEED = 1000;
     /** Solar panel maximum out power in mW */
-    static final int MAX_OUTPUT_POWER = 900000;
+    static int MAX_OUTPUT_POWER = 900000;
     /** Battery capacity in mAh */
     static final int MAX_BATTERY_CAPACITY = 42000;
     /** Initial battery level in mAh */
@@ -60,6 +60,8 @@ public class SolarPanel extends AbstractToolAndApplication {
     static final int SUN_SHADE_SLIDER_LIMITS = 50;
     /** Thickness of the displayed solar panel */
     static final int PANEL_STROKE = 5;
+    /** The default configuration string */
+    static final String DEFAULT_CONFIG = "010310009000";
     /** Current battery capacity in mW */
     double batteryLevel = 0;
     /** Current output power from solar panel in mW */
@@ -78,8 +80,10 @@ public class SolarPanel extends AbstractToolAndApplication {
     MotorMovement motor;
     /** Automatic Sun movment for test (single run per TEST) */
     SunTest test;
-    /** The coords for the line representing the solar panel */
+    /** The coords for the line representing the solar panel: (x,y,length) */
     int[] solarPanelLine;
+    /** Required to avoid GUI initialization on reset behaviour */
+    private boolean notInitialized = true;
     
     /**
      * Constructor. Set the tool name and version
@@ -105,7 +109,9 @@ public class SolarPanel extends AbstractToolAndApplication {
      */
     @Override
     protected JComponent buildMainDisplayArea() {
-        initComponents();
+        if(notInitialized)
+            initComponents();
+        notInitialized = false;
         outputPower = 0;
         panelAngle = 0;
         // The solar panel line components (x,y,length)
@@ -134,11 +140,10 @@ public class SolarPanel extends AbstractToolAndApplication {
     }
     
     /**
-     * Finish all threads and initializes all data
+     * Finish all threads and initializes data
      */
     @Override
     protected void reset() {
-        // TODO TEST THE RESET BEHAVIOUR
         battery.finish();
         sensors.finish();
         if(motor != null)
@@ -152,6 +157,8 @@ public class SolarPanel extends AbstractToolAndApplication {
             System.out.println("Reset: "+ex.toString());
         }
         buildMainDisplayArea();
+        // Reset config as well
+        setConfigFromString(DEFAULT_CONFIG);
     }
     
     @Override
@@ -192,7 +199,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     }
     
     /**
-     * Read MMIO updates
+     * Read MMIO updates. Only motor movement commands are accepted
      * @param resource
      * @param notice 
      */
@@ -225,7 +232,7 @@ public class SolarPanel extends AbstractToolAndApplication {
      * @param dataAddr
      * @param dataValue 
      */
-    private synchronized void updateMMIOControlAndData(int dataAddr, int dataValue) {
+    private static synchronized void updateMMIOControlAndData(int dataAddr, int dataValue) {
         Globals.memoryAndRegistersLock.lock();
         try {
             try {
@@ -238,7 +245,9 @@ public class SolarPanel extends AbstractToolAndApplication {
         }
     }
 
-    
+    /**
+     * Thread to simulate solar panel output power and battery charge
+     */
     private class BatteryThread extends Thread {
         private boolean finish = false;
         private double newBatteryLevel = -1;
@@ -305,6 +314,9 @@ public class SolarPanel extends AbstractToolAndApplication {
         }
     }
     
+    /**
+     * Thread to simulate readings from the solar intensity sensors
+     */
     private class SensorsThread extends Thread {       
         private boolean finish = false;
         
@@ -367,6 +379,9 @@ public class SolarPanel extends AbstractToolAndApplication {
         }
     }
     
+    /**
+     * Thread to perform a *single* solar panel movement
+     */
     private class MotorMovement extends Thread {
         
         private final int nextAngle;
@@ -428,12 +443,34 @@ public class SolarPanel extends AbstractToolAndApplication {
         }
     }
     
+    /**
+     * Thread to perform an automated test based on input configuration
+     */
     private class SunTest extends Thread {
         public SunTest() {
         }
         
         @Override
         public void run() {
+            // Ask for input string with test configuration
+            String defc = "Default test";
+            String config = (String)JOptionPane.showInputDialog(panelTools,
+                    "Paste the configuration string (give by Blackboard) here:\n",
+                    "Evaluable test",
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,null,defc);
+            boolean validConfig = (config != null) && (config.length() == 12);
+            // Parse configuration, if default conf, do not modify values
+            if(validConfig && !config.equals(defc))
+                validConfig = setConfigFromString(config);
+            // If something is wrong, notify and skip test
+            if(!validConfig)
+            {
+                JOptionPane.showMessageDialog(panelTools, "Invalid configuration provided.\n"+
+                        "Use \""+defc+"\" to run a generic test.", "Test error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            // Start test
             // Disable controls
             sunSlider.setEnabled(false);
             testButton.setEnabled(false);
@@ -497,6 +534,10 @@ public class SolarPanel extends AbstractToolAndApplication {
             results += "Total duration: "+totalduration/1000+"s \n";
             results += String.format("Total charge: %.3fA \n",totalcharge/1000);
             JOptionPane.showMessageDialog(panelTools, results, "Test results", JOptionPane.INFORMATION_MESSAGE);
+            // TODO GENERATE CODED OUTPUT STRING
+            //
+            // Reset configuration
+            setConfigFromString(DEFAULT_CONFIG);
             // Enable controls
             sunSlider.setValue(val);
             sunSlider.setEnabled(true);
@@ -698,13 +739,35 @@ public class SolarPanel extends AbstractToolAndApplication {
     private void sunSliderStateChanged(javax.swing.event.ChangeEvent evt) {//GEN-FIRST:event_sunSliderStateChanged
         sunPos = sunSlider.getValue();
         changeBackgroundColor();
-        // Test code to use slider as panel angle controller
+        // TEST CODE to use slider as panel's angle controller
         //double mdegtick = (double)(MAX_PANEL_ANGLE-MIN_PANEL_ANGLE)/sunSlider.getMaximum();
         //panelAngle = (int)((sunPos*mdegtick)+MIN_PANEL_ANGLE);
         //angleValueLabel.setText(String.format("%dº",panelAngle/1000));
-        // End of test code
+        // END OF TEST CODE
         updateCanvas();
     }//GEN-LAST:event_sunSliderStateChanged
+    
+    /**
+     * Set the configuration from a string
+     * @param config the configuration string
+     * @return true for a valid configuration, false otherwise
+     */
+    private boolean setConfigFromString(String config) {
+        try{      
+            TEST_DURATION = Integer.valueOf(config.substring(1,3));
+            if(TEST_DURATION <= 0) throw new NumberFormatException();
+            TEST_CYCLES   = Integer.valueOf(config.substring(3,4));
+            if(TEST_CYCLES <= 0) throw new NumberFormatException();
+            MOTOR_SPEED   = Integer.valueOf(config.substring(4,8));
+            if(MOTOR_SPEED <= 0) throw new NumberFormatException();
+            MAX_OUTPUT_POWER = Integer.valueOf(config.substring(8,11))*1000;
+            if(MAX_OUTPUT_POWER <= 0) throw new NumberFormatException();
+        }catch(NumberFormatException ex)
+        {
+            return false; // Invalid config
+        }
+        return true;
+    }
     
     /**
      * @param prevTmstp previous currentTimeMillis
@@ -782,7 +845,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     }
     
     /**
-     * Draw the solar panel line
+     * Draw the solar panel line and sensors with dots
      */
     public void updateCanvas() {
         Graphics2D g = (Graphics2D)canvas.getGraphics();
@@ -832,7 +895,7 @@ public class SolarPanel extends AbstractToolAndApplication {
             java.util.logging.Logger.getLogger(SolarPanel.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
         }
 
-        /* Create and display the form */
+        /* Create and display the form standalone */
         java.awt.EventQueue.invokeLater(() -> {
             SolarPanel p = new SolarPanel();
             p.buildMainDisplayArea();
