@@ -21,7 +21,7 @@ import java.awt.event.ActionListener;
 public class SolarPanel extends AbstractToolAndApplication {
 
     private static final String TOOLNAME = "Solar Panel";
-    private static final String VERSION = "0.9";
+    private static final String VERSION = "1.0";
     
     /** Memory addreses for the MMIO */
     static final int MEM_IO_WRITE_POWER   = Memory.memoryMapBaseAddress + 0x00;
@@ -30,20 +30,18 @@ public class SolarPanel extends AbstractToolAndApplication {
     static final int MEM_IO_READ_COMMAND  = Memory.memoryMapBaseAddress + 0x60;
     static final int MEM_IO_WRITE_BATTERY = Memory.memoryMapBaseAddress + 0x80;
   
-    /** Simulation speed factor for time computations */
+    /** Simulation speed factor for time computations (>0) */
     static int SPEED_FACTOR = 1;
     /** Battery thread frequency in milliseconds */
     static final int BATTERY_FREQUENCY = 200;
-    /** Sensors thread frequency in milliseconds */
-    static final int SENSORS_FREQUENCY = 200;
     /** Sensor max value (sensor in [0..MAX_S_VAL] */
     static final int MAX_SENSOR_VALUE = 255;
     /** Test time in seconds */
-    static int TEST_DURATION = 10;
+    static int TEST_DURATION = 60;
     /** Number of cicles to repeat the test */
     static int TEST_CYCLES = 3;
     /** Motor speed in milli-degrees per second */
-    static int MOTOR_SPEED = 1000;
+    static int MOTOR_SPEED = 2000;
     /** Solar panel maximum out power in mW */
     static int MAX_OUTPUT_POWER = 900000;
     /** Battery capacity in mAh */
@@ -73,9 +71,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Current Sun position, based on slider. Position is in degrees can be computed through {@link #getSunDegrees()} */
     int sunPos = 0;
     /** Battery thread */
-    BatteryThread battery;
-    /** Sensors thread */
-    SensorsThread sensors;  
+    BatteryThread battery; 
     /** Motor movement thread (single run per movement) */
     MotorMovement motor;
     /** Automatic Sun movment for test (single run per TEST) */
@@ -125,9 +121,7 @@ public class SolarPanel extends AbstractToolAndApplication {
         sliderToDegrees =  180.0 / (maxs-2*SUN_SHADE_SLIDER_LIMITS);
         // Create and start threads for battery and sensors
         battery = new BatteryThread();
-        sensors = new SensorsThread();   
         battery.start();
-        sensors.start();
         return panelTools;
     }
     
@@ -145,15 +139,14 @@ public class SolarPanel extends AbstractToolAndApplication {
     @Override
     protected void reset() {
         battery.finish();
-        sensors.finish();
         if(motor != null)
             motor.interrupt();
         if(test != null)
             test.interrupt();
-        try{
+        try {
+            Thread.sleep(BATTERY_FREQUENCY);
             battery.join(BATTERY_FREQUENCY);
-            sensors.join(SENSORS_FREQUENCY);
-        }catch(InterruptedException ex) {
+        } catch (InterruptedException ex) {
             System.out.println("Reset: "+ex.toString());
         }
         buildMainDisplayArea();
@@ -218,7 +211,6 @@ public class SolarPanel extends AbstractToolAndApplication {
             // No commands are accepted while motor is running
             if(motor == null || (!motor.isMoving && command >= MIN_PANEL_ANGLE && command <= MAX_PANEL_ANGLE))
             {
-                System.out.println(command);
                 motor = new MotorMovement(command);
                 motor.start();
             }
@@ -236,7 +228,10 @@ public class SolarPanel extends AbstractToolAndApplication {
         Globals.memoryAndRegistersLock.lock();
         try {
             try {
-                Globals.memory.setRawWord(dataAddr, dataValue);
+                synchronized(TOOLNAME) // Required to avoid concurrence issues
+                {
+                    Globals.memory.setRawWord(dataAddr, dataValue);
+                }
             } catch (AddressErrorException aee) {
                 System.out.println("Tool author specified incorrect MMIO address!" + aee);
             }
@@ -246,7 +241,8 @@ public class SolarPanel extends AbstractToolAndApplication {
     }
 
     /**
-     * Thread to simulate solar panel output power and battery charge
+     * Thread to simulate solar panel output power and battery charge. 
+     * It also provides updates on the solar intensity sensors
      */
     private class BatteryThread extends Thread {
         private boolean finish = false;
@@ -273,19 +269,24 @@ public class SolarPanel extends AbstractToolAndApplication {
         @Override
         public void run() {
             long delay;
-            double delta;
+            double incidence;
             double charge;
+            int lval;
+            int rval;
+            double logf;
+            double ll = 2;
+            double cf = MAX_SENSOR_VALUE / ll;
             do{
                 try {
                     delay = System.currentTimeMillis();
+                    incidence = getIncidenceAngle();
                     if(newBatteryLevel < 0)
                     {
                         // Compute solar panel output power
-                        delta = getIncidenceAngle();
-                        if(delta<=0 || delta >= 180)
+                        if(incidence<=0 || incidence >= 180)
                             outputPower = 0;
                         else
-                            outputPower = (int)(Math.sin(Math.toRadians(delta))*MAX_OUTPUT_POWER);
+                            outputPower = (int)(Math.sin(Math.toRadians(incidence))*MAX_OUTPUT_POWER);
                         // Increase battery level, charge is mAh
                         charge = outputPower / BUS_VOLTAGE; 
                         charge = charge*BATTERY_FREQUENCY/3600000*SPEED_FACTOR;
@@ -301,52 +302,17 @@ public class SolarPanel extends AbstractToolAndApplication {
                     // UPDATE MMIO for output power in mWh and battery in mAh
                     updateMMIOControlAndData(MEM_IO_WRITE_POWER, (int)outputPower);
                     updateMMIOControlAndData(MEM_IO_WRITE_BATTERY, (int)batteryLevel);
-                    // Update labels
+                    // Update GUI labels
                     poutValueLabel.setText(String.format("%.3f Wh", outputPower/1000)); //Wh
                     batteryValueLabel.setText(String.format("%.3f Ah (%.2f%%)", batteryLevel/1000, batteryLevel/MAX_BATTERY_CAPACITY*100)); //Ah (%)
-                    // Wait till next update
-                    delay = getDelay(delay, SENSORS_FREQUENCY);
-                    this.sleep(delay);
-                } catch (InterruptedException ex) {
-                    finish = true;
-                }
-            }while(!finish);
-        }
-    }
-    
-    /**
-     * Thread to simulate readings from the solar intensity sensors
-     */
-    private class SensorsThread extends Thread {       
-        private boolean finish = false;
-        
-        public SensorsThread() {
-        }
-        
-        private void finish() {
-            finish = true;
-        }
-        
-        @Override
-        public void run() {
-            int lval;
-            int rval;
-            long delay;
-            double incidence;
-            double logf;
-            double ll = 2;
-            double cf = MAX_SENSOR_VALUE / ll;
-            do{
-                try{
-                    delay = System.currentTimeMillis();
+                    
+                    // Sensors update                   
                     if(isDark())
                     {
                         lval = 0;
                         rval = 0;
                     }
                     else
-                    {
-                        incidence = getIncidenceAngle();
                         if(incidence < 90)
                         {
                             logf = Math.log(incidence/90.0)+ll;                            
@@ -361,18 +327,18 @@ public class SolarPanel extends AbstractToolAndApplication {
                             lval = lval<0? 0:lval;
                             rval = MAX_SENSOR_VALUE;
                         }
-                    }
+                    // Write GUI labels
                     lintValueLabel.setText(String.valueOf(lval));
                     rintValueLabel.setText(String.valueOf(rval));
                     // Write MMIO for sensors 16bits for Left and 16 for Rigth (in C2)
                     lval = lval<<16;
                     rval = rval&0x0000ffff;
                     updateMMIOControlAndData(MEM_IO_WRITE_SENSORS, (lval|rval));
-                    delay = getDelay(delay, SENSORS_FREQUENCY);
+
+                    // Wait till next update
+                    delay = getDelay(delay, BATTERY_FREQUENCY);
                     this.sleep(delay);
-                }catch(InterruptedException ex) {
-                    System.out.println("Error on sleep for SensorsThread run()");
-                    System.out.println(ex.toString());
+                } catch (InterruptedException ex) {
                     finish = true;
                 }
             }while(!finish);
@@ -403,42 +369,34 @@ public class SolarPanel extends AbstractToolAndApplication {
             // Check if next angle is valid
             if(nextAngle < MIN_PANEL_ANGLE || nextAngle > MAX_PANEL_ANGLE)
                 return;
-            long delay;
-            isMoving = true;
             movementLabel.setText("Moving");
-            int steps = nextAngle - panelAngle;
-            int dir = (nextAngle - panelAngle)>0?1:-1;
-            double mspermd = MOTOR_SPEED/1000.0;
-            // Set graphics for painting solar panel
-            Graphics2D g = (Graphics2D)panelTools.getGraphics();
-            g.setStroke(new BasicStroke(PANEL_STROKE, BasicStroke.CAP_SQUARE, BasicStroke.JOIN_ROUND));
-            g.setColor(Color.BLUE);
+            long delay;
+            int step = 10; // mº per step
+            int diff = (nextAngle - panelAngle);
+            int steps = Math.abs(diff)/step;
+            int laststep = Math.abs(diff)%step;
+            if(laststep>0) steps++;
+            int dir = diff>0? 1:-1; // Angle sign: positive to right, negative to left
+            long stepms = (long)Math.ceil(step*(1000.0/MOTOR_SPEED)); // Last step (if required) not considered, but is OK
             do{
-                try{
+                try {
                     delay = System.currentTimeMillis();
-                    panelAngle += dir;
-                    steps -= dir;
-                    // For some reason, this can happen
-                    if(panelAngle < MIN_PANEL_ANGLE || panelAngle > MAX_PANEL_ANGLE)
-                    {
-                        panelAngle += dir;
-                        steps = 0;
-                    }
+                    if(laststep > 0 && steps == 1)
+                        step = laststep;
+                    panelAngle += (step*dir);
+                    steps--;
                     // UPDATE MMIO for motor position in milli-degrees
                     updateMMIOControlAndData(MEM_IO_WRITE_ANGLE, panelAngle);
                     angleValueLabel.setText(String.format("%.3fº", panelAngle/1000.0));
-                    // Check if movement completed
-                    isMoving = steps != 0;
-                    delay = System.currentTimeMillis()-delay;
-                    delay = ((long)mspermd-delay)/SPEED_FACTOR;
-                    delay = delay>0? delay:1;
+                    // Wait movement
+                    delay = getDelay(delay, stepms);
                     this.sleep(delay);
                     updateCanvas();
-                }catch(InterruptedException ex) {
+                } catch (InterruptedException ex) {
                     System.out.println("Error on sleep for MotorMovement run()");
                     System.out.println(ex.toString());
                 }
-            }while(isMoving);
+            }while(steps > 0);
             movementLabel.setText("Stopped");
         }
     }
@@ -455,7 +413,7 @@ public class SolarPanel extends AbstractToolAndApplication {
             // Ask for input string with test configuration
             String defc = "Default test";
             String config = (String)JOptionPane.showInputDialog(panelTools,
-                    "Paste the configuration string (give by Blackboard) here:\n",
+                    "Paste the configuration string (given by Blackboard) here:\n",
                     "Evaluable test",
                     JOptionPane.QUESTION_MESSAGE,
                     null,null,defc);
@@ -483,7 +441,7 @@ public class SolarPanel extends AbstractToolAndApplication {
             long delay;
             // Set battery level to 0 and wait to ensure new value
             battery.setBattery(0);
-            try{
+            try {
                 this.sleep(BATTERY_FREQUENCY*2);
             } catch (InterruptedException ex) {
                 System.out.println("Error on sleep for SunTest run()");
@@ -492,19 +450,20 @@ public class SolarPanel extends AbstractToolAndApplication {
             
             // Each cycle cover 1 slide range
             for(int c=0; c<TEST_CYCLES; c++)
-            {
-                // Try to set the cycle to the time desired
-                int dur = TEST_DURATION*1000;
-                int df = dur/(max-min-2*SUN_SHADE_SLIDER_LIMITS);
-                df = (df>=0)?df:1;
-                long ct = System.currentTimeMillis();
-                charge[c] = batteryLevel;
-                // Cycle execution
-                for(int p=min; p<max; p++)
-                {
-                    sunPos = p;
-                    sunSlider.setValue(p);
-                    try {
+                try {
+                    // Wait a while before next cycle, this allows to reposition the panel
+                    this.sleep((MAX_PANEL_ANGLE-MIN_PANEL_ANGLE)/MOTOR_SPEED*100);
+                    // Try to set the cycle to the desired time
+                    int dur = TEST_DURATION*1000;
+                    int df = dur/(max-min-2*SUN_SHADE_SLIDER_LIMITS);
+                    df = (df>=0)?df:1;
+                    long ct = System.currentTimeMillis();
+                    charge[c] = batteryLevel;
+                    // Cycle execution
+                    for(int p=min; p<max; p++)
+                    {
+                        sunPos = p;
+                        sunSlider.setValue(p);
                         delay = (long)(Math.random()*df);
                         delay = (delay>1)?delay:df;
                         if(val>p-SUN_SHADE_SLIDER_LIMITS && val<p+SUN_SHADE_SLIDER_LIMITS)
@@ -512,15 +471,16 @@ public class SolarPanel extends AbstractToolAndApplication {
                         dur -= delay;
                         if(dur > 0)
                             this.sleep(delay);
-                    } catch (InterruptedException ex) {
-                        System.out.println("Error on sleep for SunTest run()");
-                        System.out.println(ex.toString());
                     }
+                    // Store cycle duration in ms and charge in mW
+                    duration[c] = (System.currentTimeMillis()-ct)*SPEED_FACTOR;
+                    charge[c] = batteryLevel-charge[c];
+                } catch (InterruptedException ex) {
+                            System.out.println("Error on sleep for SunTest run()");
+                            System.out.println(ex.toString());
+                            JOptionPane.showMessageDialog(panelTools, "ERROR", "Error executing test", JOptionPane.ERROR_MESSAGE);
+                            return;
                 }
-                // Store cycle duration in ms and charge in mW
-                duration[c] = (System.currentTimeMillis()-ct)*SPEED_FACTOR;
-                charge[c] = batteryLevel-charge[c];
-            }
             // Generate results
             String results = "";
             long totalduration = 0;
@@ -753,7 +713,7 @@ public class SolarPanel extends AbstractToolAndApplication {
      * @return true for a valid configuration, false otherwise
      */
     private boolean setConfigFromString(String config) {
-        try{      
+        try {      
             TEST_DURATION = Integer.valueOf(config.substring(1,3));
             if(TEST_DURATION <= 0) throw new NumberFormatException();
             TEST_CYCLES   = Integer.valueOf(config.substring(3,4));
@@ -762,7 +722,7 @@ public class SolarPanel extends AbstractToolAndApplication {
             if(MOTOR_SPEED <= 0) throw new NumberFormatException();
             MAX_OUTPUT_POWER = Integer.valueOf(config.substring(8,11))*1000;
             if(MAX_OUTPUT_POWER <= 0) throw new NumberFormatException();
-        }catch(NumberFormatException ex)
+        } catch (NumberFormatException ex)
         {
             return false; // Invalid config
         }
@@ -777,8 +737,9 @@ public class SolarPanel extends AbstractToolAndApplication {
     private long getDelay(long prevTmstp, long freq) {
         long delay = System.currentTimeMillis()-prevTmstp;
         delay = freq-delay;
+        delay/= SPEED_FACTOR;
         delay = delay>0? delay:1;
-        return delay/SPEED_FACTOR;
+        return delay;
     }
     
     /**
@@ -894,7 +855,7 @@ public class SolarPanel extends AbstractToolAndApplication {
         } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | javax.swing.UnsupportedLookAndFeelException ex) {
             java.util.logging.Logger.getLogger(SolarPanel.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
         }
-
+        
         /* Create and display the form standalone */
         java.awt.EventQueue.invokeLater(() -> {
             SolarPanel p = new SolarPanel();
