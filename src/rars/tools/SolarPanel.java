@@ -33,12 +33,12 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Simulation speed factor for time computations (>0) */
     static int SPEED_FACTOR = 1;
     /** Battery thread frequency in milliseconds */
-    static final int BATTERY_FREQUENCY = 200;
+    static final int BATTERY_FREQUENCY = 250;
     /** Sensor max value (sensor in [0..MAX_S_VAL] */
     static final int MAX_SENSOR_VALUE = 255;
     /** Test time in seconds */
     static int TEST_DURATION = 60;
-    /** Number of cicles to repeat the test */
+    /** Number of cycles to repeat the test */
     static int TEST_CYCLES = 3;
     /** Motor speed in milli-degrees per second */
     static int MOTOR_SPEED = 2000;
@@ -59,7 +59,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Thickness of the displayed solar panel */
     static final int PANEL_STROKE = 5;
     /** The default configuration string */
-    static final String DEFAULT_CONFIG = "010310009000";
+    static final String DEFAULT_CONFIG = "060310009000";
     /** Current battery capacity in mW */
     double batteryLevel = 0;
     /** Current output power from solar panel in mW */
@@ -111,8 +111,10 @@ public class SolarPanel extends AbstractToolAndApplication {
         outputPower = 0;
         panelAngle = 0;
         // The solar panel line components (x,y,length)
-        int lineWidth = this.getWidth()/4;
-        solarPanelLine = new int[]{this.getWidth()/2,this.getHeight()-250,lineWidth};
+        int lineWidth = canvas.getWidth()/8;
+        solarPanelLine = new int[]{canvas.getWidth()/2,
+            canvas.getHeight()-(int)(lineWidth*Math.sin(Math.toRadians(MAX_PANEL_ANGLE/1000))),
+            lineWidth};
         setBatteryLevel(INITIAL_BATTERY_PCT);
         angleValueLabel.setText("0º");
         int maxs = sunSlider.getMaximum();
@@ -209,7 +211,7 @@ public class SolarPanel extends AbstractToolAndApplication {
                 return;
             int command = memAccNotice.getValue();
             // No commands are accepted while motor is running
-            if(motor == null || (!motor.isMoving && command >= MIN_PANEL_ANGLE && command <= MAX_PANEL_ANGLE))
+            if((motor == null || !motor.isMoving) && command >= MIN_PANEL_ANGLE && command <= MAX_PANEL_ANGLE)
             {
                 motor = new MotorMovement(command);
                 motor.start();
@@ -225,18 +227,16 @@ public class SolarPanel extends AbstractToolAndApplication {
      * @param dataValue 
      */
     private static synchronized void updateMMIOControlAndData(int dataAddr, int dataValue) {
-        Globals.memoryAndRegistersLock.lock();
-        try {
+        synchronized(TOOLNAME) // Required to avoid concurrence issues
+        {
+            Globals.memoryAndRegistersLock.lock();
             try {
-                synchronized(TOOLNAME) // Required to avoid concurrence issues
-                {
                     Globals.memory.setRawWord(dataAddr, dataValue);
-                }
-            } catch (AddressErrorException aee) {
-                System.out.println("Tool author specified incorrect MMIO address!" + aee);
+                } catch (AddressErrorException aee) {
+                    System.out.println("Tool author specified incorrect MMIO address!" + aee);
+            } finally {
+                Globals.memoryAndRegistersLock.unlock();
             }
-        } finally {
-            Globals.memoryAndRegistersLock.unlock();
         }
     }
 
@@ -371,7 +371,7 @@ public class SolarPanel extends AbstractToolAndApplication {
                 return;
             movementLabel.setText("Moving");
             long delay;
-            int step = 10; // mº per step
+            int step = 100; // mº per step
             int diff = (nextAngle - panelAngle);
             int steps = Math.abs(diff)/step;
             int laststep = Math.abs(diff)%step;
@@ -417,7 +417,9 @@ public class SolarPanel extends AbstractToolAndApplication {
                     "Evaluable test",
                     JOptionPane.QUESTION_MESSAGE,
                     null,null,defc);
-            boolean validConfig = (config != null) && (config.length() == 12);
+            if(config == null) // Cancel button
+                return;
+            boolean validConfig = config.length() == 12;
             // Parse configuration, if default conf, do not modify values
             if(validConfig && !config.equals(defc))
                 validConfig = setConfigFromString(config);
@@ -810,6 +812,8 @@ public class SolarPanel extends AbstractToolAndApplication {
      */
     public void updateCanvas() {
         Graphics2D g = (Graphics2D)canvas.getGraphics();
+        if(g == null) // Avoid exception at close
+            return;
         canvas.paint(g);
         g.setStroke(new BasicStroke(PANEL_STROKE, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         // Compute right side
@@ -826,9 +830,10 @@ public class SolarPanel extends AbstractToolAndApplication {
         g.fillRoundRect(endXl-PANEL_STROKE, endYl-PANEL_STROKE, PANEL_STROKE*2, PANEL_STROKE*2, PANEL_STROKE, PANEL_STROKE*2);
         g.fillRoundRect(endXr-PANEL_STROKE, endYr-PANEL_STROKE, PANEL_STROKE*2, PANEL_STROKE*2, PANEL_STROKE, PANEL_STROKE*2);
         // Support point
-        int ts = PANEL_STROKE*3;
+        g.setColor(Color.LIGHT_GRAY);
+        int ts = PANEL_STROKE*2;
         int[] vx = new int[]{startX, startX-ts, startX+ts};
-        int[] vy = new int[]{startY, startY+ts, startY+ts};
+        int[] vy = new int[]{startY, canvas.getHeight(), canvas.getHeight()};
         g.fillPolygon(vx, vy, 3);
         // Solar panel
         g.setColor(Color.BLUE);
