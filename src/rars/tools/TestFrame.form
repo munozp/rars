@@ -28,7 +28,7 @@
     </DimensionLayout>
     <DimensionLayout dim="1">
       <Group type="103" groupAlignment="0" attributes="0">
-          <Component id="panelTools" alignment="0" max="32767" attributes="0"/>
+          <Component id="panelTools" min="-2" max="-2" attributes="0"/>
       </Group>
     </DimensionLayout>
   </Layout>
@@ -48,21 +48,20 @@
       <Layout>
         <DimensionLayout dim="0">
           <Group type="103" groupAlignment="0" attributes="0">
-              <Group type="102" alignment="0" attributes="0">
+              <Group type="102" attributes="0">
                   <EmptySpace max="-2" attributes="0"/>
                   <Group type="103" groupAlignment="0" max="-2" attributes="0">
-                      <Component id="readFromLabel" pref="240" max="32767" attributes="0"/>
                       <Component id="writeToLabel" max="32767" attributes="0"/>
+                      <Component id="readFromLabel" pref="228" max="32767" attributes="0"/>
                   </Group>
                   <EmptySpace max="-2" attributes="0"/>
                   <Group type="103" groupAlignment="0" max="-2" attributes="0">
-                      <Component id="memAcountLabel" pref="128" max="32767" attributes="0"/>
-                      <Component id="readFromField" max="32767" attributes="0"/>
                       <Group type="102" attributes="0">
-                          <Component id="writeToField" min="-2" pref="44" max="-2" attributes="0"/>
+                          <Component id="writeToField" max="32767" attributes="0"/>
                           <EmptySpace max="-2" attributes="0"/>
-                          <Component id="writeButton" pref="78" max="32767" attributes="0"/>
+                          <Component id="writeButton" min="-2" pref="66" max="-2" attributes="0"/>
                       </Group>
+                      <Component id="readFromField" min="-2" pref="140" max="-2" attributes="0"/>
                   </Group>
                   <EmptySpace min="0" pref="16" max="32767" attributes="0"/>
               </Group>
@@ -72,19 +71,16 @@
           <Group type="103" groupAlignment="0" attributes="0">
               <Group type="102" attributes="0">
                   <Group type="103" groupAlignment="3" max="-2" attributes="0">
-                      <Component id="writeToLabel" alignment="3" max="32767" attributes="0"/>
+                      <Component id="writeToLabel" alignment="3" min="-2" pref="28" max="-2" attributes="0"/>
                       <Component id="writeToField" alignment="3" max="32767" attributes="0"/>
                       <Component id="writeButton" alignment="3" min="-2" max="-2" attributes="0"/>
                   </Group>
                   <EmptySpace max="-2" attributes="0"/>
-                  <Group type="103" groupAlignment="0" attributes="0">
-                      <Group type="102" alignment="0" attributes="0">
-                          <Component id="readFromField" max="32767" attributes="0"/>
-                          <EmptySpace max="-2" attributes="0"/>
-                          <Component id="memAcountLabel" min="-2" pref="24" max="-2" attributes="0"/>
-                      </Group>
-                      <Component id="readFromLabel" min="-2" pref="28" max="-2" attributes="0"/>
+                  <Group type="103" groupAlignment="0" max="-2" attributes="0">
+                      <Component id="readFromLabel" max="32767" attributes="0"/>
+                      <Component id="readFromField" max="32767" attributes="0"/>
                   </Group>
+                  <EmptySpace max="32767" attributes="0"/>
               </Group>
           </Group>
         </DimensionLayout>
@@ -103,7 +99,7 @@
             <Property name="foreground" type="java.awt.Color" editor="org.netbeans.beaninfo.editors.ColorEditor">
               <Color blue="ff" green="ff" red="ff" type="rgb"/>
             </Property>
-            <Property name="text" type="java.lang.String" value="Write to MMIO"/>
+            <Property name="text" type="java.lang.String" value="Write to MMIO "/>
           </Properties>
         </Component>
         <Component class="javax.swing.JLabel" name="readFromLabel">
@@ -114,15 +110,13 @@
             <Property name="foreground" type="java.awt.Color" editor="org.netbeans.beaninfo.editors.ColorEditor">
               <Color blue="ff" green="ff" red="ff" type="rgb"/>
             </Property>
-            <Property name="text" type="java.lang.String" value="Read from MMIO"/>
+            <Property name="text" type="java.lang.String" value="Read from MMIO "/>
           </Properties>
         </Component>
         <Component class="javax.swing.JTextField" name="readFromField">
           <Properties>
             <Property name="editable" type="boolean" value="false"/>
           </Properties>
-        </Component>
-        <Component class="javax.swing.JLabel" name="memAcountLabel">
         </Component>
         <Component class="javax.swing.JButton" name="writeButton">
           <Properties>

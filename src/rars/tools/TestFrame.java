@@ -16,8 +16,8 @@ import rars.util.Binary;
  */
 public class TestFrame extends AbstractToolAndApplication {
 
-    private static final String TOOLNAME = "Test frame";
-    private static final String VERSION = "0.1";
+    private static final String TOOLNAME = "MMIO Test";
+    private static final String VERSION = "1.0";
     
     private static final int TEST_WRITE_TO_ADDRESS = Memory.memoryMapBaseAddress + 0x00;
     private static final int TEST_READ_FROM_ADDRESS = Memory.memoryMapBaseAddress + 0x20;
@@ -38,29 +38,40 @@ public class TestFrame extends AbstractToolAndApplication {
     @Override
     protected JComponent buildMainDisplayArea() {
         initComponents();
-        
-        memAcountLabel.setText(String.valueOf("0"));
-        writeToLabel.setText(writeToLabel.getText()+" (MMIO "+ Binary.intToHexString(TEST_WRITE_TO_ADDRESS)+"):");
-        readFromLabel.setText(readFromLabel.getText()+" (MMIO "+ Binary.intToHexString(TEST_READ_FROM_ADDRESS)+"):");
-
+        // Put MMIO addresses into labels 
+        writeToLabel.setText(writeToLabel.getText() + Binary.intToHexString(TEST_WRITE_TO_ADDRESS) + ":");
+        readFromLabel.setText(readFromLabel.getText() + Binary.intToHexString(TEST_READ_FROM_ADDRESS) + ":");
         return panelTools;
     }
     
     @Override
-    protected void performSpecialClosingDuties() {
+    protected JComponent getHelpComponent() {
+        final String helpContent =
+            "Use this tool to test the Memory Mapped IO (MMIO).\n"+
+            "\nMMIO addresses used:\n" +
+            Binary.intToHexString(TEST_WRITE_TO_ADDRESS)+" < Send the integer value written next to the 'Write' button to this address.\n"+
+            Binary.intToHexString(TEST_READ_FROM_ADDRESS)+" > The current value in this address is shown in the field down to the 'Write' button.\n"+
+            "\nAll values are considered as integers expressed in C2."+
+            "\nRemember to press the 'Connect to program' button for using the tool.";
+        JButton help = new JButton("Help");
+        help.addActionListener(
+            new java.awt.event.ActionListener() {
+                public void actionPerformed(java.awt.event.ActionEvent e) {
+                    JTextArea ja = new JTextArea(helpContent);
+                    ja.setRows(8);
+                    ja.setColumns(50);
+                    ja.setLineWrap(true);
+                    ja.setWrapStyleWord(true);
+                    JOptionPane.showMessageDialog(null, new JScrollPane(ja), "Simple MMIO test tool", JOptionPane.INFORMATION_MESSAGE);
+                }
+            });
+        return help;
     }
-    
-    
-    @Override
-    protected void reset() {
-    }
-    
-    
+       
     @Override
     protected void addAsObserver() {
         addAsObserver(TEST_READ_FROM_ADDRESS, TEST_READ_FROM_ADDRESS);
     }
-
 
     @Override
     protected void processRISCVUpdate(Observable resource, AccessNotice notice) {       
@@ -75,8 +86,6 @@ public class TestFrame extends AbstractToolAndApplication {
                 return;
             int value = memAccNotice.getValue();
             readFromField.setText(String.valueOf(value));
-            int count = Integer.valueOf(memAcountLabel.getText())+1;
-            memAcountLabel.setText(Integer.toString(count));
         }
     }
     
@@ -109,7 +118,6 @@ public class TestFrame extends AbstractToolAndApplication {
         writeToLabel = new javax.swing.JLabel();
         readFromLabel = new javax.swing.JLabel();
         readFromField = new javax.swing.JTextField();
-        memAcountLabel = new javax.swing.JLabel();
         writeButton = new javax.swing.JButton();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
@@ -121,11 +129,11 @@ public class TestFrame extends AbstractToolAndApplication {
 
         writeToLabel.setBackground(new java.awt.Color(102, 102, 102));
         writeToLabel.setForeground(new java.awt.Color(255, 255, 255));
-        writeToLabel.setText("Write to MMIO");
+        writeToLabel.setText("Write to MMIO ");
 
         readFromLabel.setBackground(new java.awt.Color(102, 102, 102));
         readFromLabel.setForeground(new java.awt.Color(255, 255, 255));
-        readFromLabel.setText("Read from MMIO");
+        readFromLabel.setText("Read from MMIO ");
 
         readFromField.setEditable(false);
 
@@ -143,32 +151,29 @@ public class TestFrame extends AbstractToolAndApplication {
             .addGroup(panelToolsLayout.createSequentialGroup()
                 .addContainerGap()
                 .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
-                    .addComponent(readFromLabel, javax.swing.GroupLayout.DEFAULT_SIZE, 240, Short.MAX_VALUE)
-                    .addComponent(writeToLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                    .addComponent(writeToLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(readFromLabel, javax.swing.GroupLayout.DEFAULT_SIZE, 228, Short.MAX_VALUE))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
-                    .addComponent(memAcountLabel, javax.swing.GroupLayout.DEFAULT_SIZE, 128, Short.MAX_VALUE)
-                    .addComponent(readFromField)
                     .addGroup(panelToolsLayout.createSequentialGroup()
-                        .addComponent(writeToField, javax.swing.GroupLayout.PREFERRED_SIZE, 44, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addComponent(writeToField)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(writeButton, javax.swing.GroupLayout.DEFAULT_SIZE, 78, Short.MAX_VALUE)))
+                        .addComponent(writeButton, javax.swing.GroupLayout.PREFERRED_SIZE, 66, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addComponent(readFromField, javax.swing.GroupLayout.PREFERRED_SIZE, 140, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addGap(0, 16, Short.MAX_VALUE))
         );
         panelToolsLayout.setVerticalGroup(
             panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(panelToolsLayout.createSequentialGroup()
                 .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE, false)
-                    .addComponent(writeToLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(writeToLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 28, javax.swing.GroupLayout.PREFERRED_SIZE)
                     .addComponent(writeToField)
                     .addComponent(writeButton))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addGroup(panelToolsLayout.createSequentialGroup()
-                        .addComponent(readFromField)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(memAcountLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 24, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addComponent(readFromLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 28, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                .addGroup(panelToolsLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(readFromLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(readFromField))
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
@@ -179,57 +184,23 @@ public class TestFrame extends AbstractToolAndApplication {
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(panelTools, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+            .addComponent(panelTools, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
         );
 
         pack();
     }// </editor-fold>//GEN-END:initComponents
 
     private void writeButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_writeButtonActionPerformed
-        int value = Integer.valueOf(writeToField.getText());
-        updateMMIOControlAndData(TEST_WRITE_TO_ADDRESS, value);
+        try{
+            int value = Integer.valueOf(writeToField.getText());
+            updateMMIOControlAndData(TEST_WRITE_TO_ADDRESS, value);
+        } catch (NumberFormatException ex) {
+            writeToField.setText("");
+        }
     }//GEN-LAST:event_writeButtonActionPerformed
 
-    /**
-     * @param args the command line arguments
-     */
-    public static void main(String args[]) {
-        /* Set the Nimbus look and feel */
-        //<editor-fold defaultstate="collapsed" desc=" Look and feel setting code (optional) ">
-        /* If Nimbus (introduced in Java SE 6) is not available, stay with the default look and feel.
-         * For details see http://download.oracle.com/javase/tutorial/uiswing/lookandfeel/plaf.html 
-         */
-        try {
-            for (javax.swing.UIManager.LookAndFeelInfo info : javax.swing.UIManager.getInstalledLookAndFeels()) {
-                if ("Nimbus".equals(info.getName())) {
-                    javax.swing.UIManager.setLookAndFeel(info.getClassName());
-                    break;
-                }
-            }
-        } catch (ClassNotFoundException ex) {
-            java.util.logging.Logger.getLogger(TestFrame.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (InstantiationException ex) {
-            java.util.logging.Logger.getLogger(TestFrame.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (IllegalAccessException ex) {
-            java.util.logging.Logger.getLogger(TestFrame.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (javax.swing.UnsupportedLookAndFeelException ex) {
-            java.util.logging.Logger.getLogger(TestFrame.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        }
-        //</editor-fold>
-        //</editor-fold>
-        //</editor-fold>
-        //</editor-fold>
-
-        /* Create and display the form */
-        java.awt.EventQueue.invokeLater(new Runnable() {
-            public void run() {
-                new TestFrame().setVisible(true);
-            }
-        });
-    }
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
-    private javax.swing.JLabel memAcountLabel;
     private javax.swing.JPanel panelTools;
     private javax.swing.JTextField readFromField;
     private javax.swing.JLabel readFromLabel;
