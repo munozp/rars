@@ -12,8 +12,6 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 
 /**
@@ -40,11 +38,11 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Sensor max value (sensor in [0..MAX_S_VAL] */
     static final int MAX_SENSOR_VALUE = 255;
     /** Test time in seconds */
-    static int TEST_DURATION = 90;
+    static int TEST_DURATION = 60;
     /** Number of cycles to repeat the test */
     static int TEST_CYCLES = 2;
     /** Motor speed in milli-degrees per second */
-    static int MOTOR_SPEED = 4000;
+    static int MOTOR_SPEED = 7000;
     /** Solar panel maximum out power in mW */
     static int MAX_OUTPUT_POWER = 900000;
     /** Battery capacity in mAh */
@@ -62,7 +60,7 @@ public class SolarPanel extends AbstractToolAndApplication {
     /** Thickness of the displayed solar panel */
     static final int PANEL_STROKE = 5;
     /** The default configuration string */
-    static final String DEFAULT_CONFIG = "090240009000";
+    static final String DEFAULT_CONFIG = "060270009000";
     /** Current battery capacity in mW */
     double batteryLevel = 0;
     /** Current output power from solar panel in mW */
