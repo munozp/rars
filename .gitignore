@@ -17,3 +17,4 @@ examples/riscv
 /nbproject/private/
 dist/README.TXT
 examples/solarpanel.asm
+examples/solarpanel.asm
